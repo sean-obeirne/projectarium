@@ -178,6 +178,7 @@ r"""*help placeholder*"""
         ]
 
 TERMINAL_PREFIX = "gnome-terminal --maximize --working-directory="
+NEOVIM_PREFIX = "nvim "
 actions = {}
 
 
@@ -285,9 +286,11 @@ class Window:
         for card in self.cards:
             card.refresh()
 
-    def add_card(self, project_name, path):
-        self.cards.append(Card(3, self.w - 4, self.new_card_y, self.x + 2, project_name, path, self))
+    def add_card(self, project_name, path, file=""):
+        self.cards.append(Card(3, self.w - 4, self.new_card_y, self.x + 2, project_name, path, file))
         self.new_card_y += 3
+        self.draw()
+        self.refresh()
 
     def get_card(self, index):
         return self.cards[index]
@@ -295,21 +298,22 @@ class Window:
     def card_count(self):
         return len(self.cards)
 
+    def delete_card(self, card):
+        self.cards.remove(card)
+        self.draw()
+        self.refresh()
 
-    def handle_input(self, key):
-        # Handle input specific to this window
-        pass
 
 class Card():
-    def __init__(self, h, w, y, x, project_name, path, window):
+    def __init__(self, h, w, y, x, project_name, path, file=""):
         self.h, self.w = h, w
         self.y, self.x = y, x
         self.win = curses.newwin(self.h, self.w, self.y, self.x)
         self.project_name = project_name
         self.path = path
+        self.file = file
         self.active = False
         self.color = WHITE
-        self.window = window
 
     def draw_active(self):
         strings = ["    cd", "nvim", "      todo", "progress", "regress"]
@@ -355,7 +359,6 @@ class Card():
         self.h = 6
         self.active = True
         self.color = ORANGE
-        self.window.draw()
         self.draw()
         self.refresh()
 
@@ -365,6 +368,8 @@ class Card():
         self.draw()
         self.refresh()
 
+def open_todo():
+    pass
 
 
 def make_title():
@@ -436,18 +441,17 @@ def main(stdscr):
     x += 2 + active.w
     done = Window(height - 2, section_width, 1, x, "Done", color=GREEN, style=BOLD)
     x += 2 + done.w
-    backlog.add_card("ROMs", "~/code/future/ROMs/")
-    backlog.add_card("ideas", "~/code/future/ideas")
-    blocked.add_card("WotR", "~/code/paused/godot/Wizards-of-the-Rift/")
-    blocked.add_card("LearnScape", "~/code/paused/LearnScape/")
-    active.add_card("goverse", "~/code/active/go/goverse/")
-    active.add_card("projectarium", "~/code/active/python/projectarium/")
-    active.add_card("snr", "~/code/active/lua/snr/")
-    active.add_card("macro-blues", "~/code/active/c/macro-blues/")
-    active.add_card("leetcode", "~/code/paused/leetcode/")
-    active.add_card("TestTaker", "~/code/paused/TestTaker//")
-    done.add_card("Sorter", "~/code/done/Sorter/")
-    done.add_card("landing-page", "~/code/done/landing-page/")
+    backlog.add_card("ROMs", "/home/sean/code/future/ROMs/")
+    blocked.add_card("WotR", "/home/sean/code/paused/godot/Wizards-of-the-Rift/")
+    blocked.add_card("LearnScape", "/home/sean/code/paused/LearnScape/")
+    active.add_card("goverse", "/home/sean/code/active/go/goverse/")
+    active.add_card("projectarium", "/home/sean/code/active/python/projectarium/", "projectarium.py")
+    active.add_card("snr", "/home/sean/.config/nvim/lua/snr/", "init.lua")
+    active.add_card("macro-blues", "/home/sean/code/active/c/macro-blues/", "macro-blues/")
+    active.add_card("leetcode", "/home/sean/code/paused/leetcode/")
+    active.add_card("TestTaker", "/home/sean/code/paused/TestTaker/")
+    done.add_card("Sorter", "/home/sean/code/done/Sorter/", "sorter.py")
+    done.add_card("landing-page", "/home/sean/code/done/landing-page/", "landing-page.py")
     windows = [backlog, blocked, active, done]
     active_window = BACKLOG
     active_row = 0
@@ -517,6 +521,26 @@ def main(stdscr):
             if active_window != og_window:
                 windows[og_window].get_card(og_row).deactivate()
             windows[active_window].get_card(active_row).activate()
+
+        if key == 'c':
+            os.system(TERMINAL_PREFIX + windows[active_window].get_card(active_row).path)
+            continue
+        if key == 'n':
+            os.system(NEOVIM_PREFIX + windows[active_window].get_card(active_row).path + windows[active_window].get_card(active_row).file)
+            continue
+        if key == 't':
+            # open_todo(windows[active_window].get_card(active_row).project_name)
+            continue
+        if key == 'p':
+            temp_card = windows[active_window].get_card(active_row)
+            windows[active_window].delete_card(temp_card)
+            windows[active_window + 1].add_card(temp_card.project_name, temp_card.path)
+            continue
+        if key == 'r':
+            temp_card = windows[active_window].get_card(active_row)
+            windows[active_window].delete_card(temp_card)
+            windows[active_window - 1].add_card(temp_card.project_name, temp_card.path)
+            continue
         if key in valid_keys:
             log.info(f"'{key}' action: {actions[key].split()}")
             if key == key.lower():
