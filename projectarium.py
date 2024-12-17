@@ -169,9 +169,7 @@ BOLD = curses.A_BOLD
 ITALIC = curses.A_ITALIC
 
     
-HEADER = [
-r"""Projectarium"""
-        ]
+HEADER = "Projectarium"
 
 FOOTER = [
 r"""*help placeholder*"""
@@ -181,87 +179,23 @@ TERMINAL_PREFIX = "gnome-terminal --maximize --working-directory="
 NEOVIM_PREFIX = "nvim "
 actions = {}
 
+statuses = [("Backlog", BLUE), ("Blocked", RED), ("Active", YELLOW), ("Done", GREEN)]
+windows = []
+# FRAME = 0
+BACKLOG = 1
+BLOCKED = 2
+ACTIVE = 3
+DONE = 4
 
-BACKLOG = 0
-BLOCKED = 1
-ACTIVE = 2
-DONE = 3
+cards = []
+active_card = None
 
-class Button:
 
-    def __init__(self, y, x, key, name, path="", command="", sctype="gt"):
-        self.y = y
-        self.x = x
-        self.key = key
-        self.name = name
-        self.path = path
-        self.sctype = sctype
-        if sctype == "gt":
-            self.command = f"{TERMINAL_PREFIX}{path}"
-            if command == "nvim":
-                self.command += f" -- {command} {path}"
-        elif sctype == "app":
-            self.command = command
-        elif sctype == "internal":
-            self.command = command
-        # log.info(f"Command created: {self.command}")
-        actions[self.key] = self.command
-
-    def draw(self):
-        x = self.x
-        swap_exists = self.swap_exists()
-        # dir_open = self.dir_open()
-        is_open = swap_exists #or dir_open
-        is_open = False
-        is_open = is_open and self.name != 'Terminal'
-
-        # prefix
-        if is_open:
-            stdscr.addch(self.y, x-3, '▪', DARK_GREY)
-        else:
-            stdscr.addch(self.y, x-3, '▪', WHITE)
-        stdscr.addch(self.y, x, '[', CYAN)
-        x += 1
-
-        # orange/black number for open files
-        if is_open:
-            stdscr.addch(self.y, x, self.key, BLACK)
-        else:
-            stdscr.addch(self.y, x, self.key, ORANGE)
-        x += 1
-
-        # suffix
-        stdscr.addch(self.y, x, ']', CYAN)
-        x += 1
-        if is_open:
-            stdscr.addstr(self.y, x, f" {self.name}", DARK_GREY)
-        else:
-            stdscr.addstr(self.y, x, f" {self.name}", WHITE)
-
-    def build_command(self):
-        return self.command + " " + self.path
-
-    def swap_exists(self):
-        swaps = os.listdir("/home/sean/.config/nvim/swap") + os.listdir("/home/sean/.local/state/nvim/swap")
-        for sf in swaps:
-            if sf.replace("%", "/")[0:-4] == self.path:
-                return True
-        return False
-
-    def dir_open(self):
-        if self.command[0:14] == "gnome-terminal":
-            fish_pids = subprocess.check_output(['pgrep', 'fish'], text=True).split('\n')
-            log.info(fish_pids)
-            for pid in fish_pids:
-                cmd = f"lsof -p {pid} | head -n 2 | tail -n 1"
-                out = subprocess.check_output(cmd, shell=True, text=True).split()
-                log.info(out)
-                if out[0] == 'fish':
-                    return f"{out[-1]}/" == self.path
-        return False
+def add_card(project_name, path, file=""):
+    cards.append(Card(project_name, path, file))
 
 class Window:
-    def __init__(self, height, width, y, x, title="", color=WHITE, style=NORMAL):
+    def __init__(self, height, width, y, x, title="", title_pos=2, color=WHITE, style=NORMAL):
         self.h = height
         self.w = width
         self.y = y
@@ -270,45 +204,22 @@ class Window:
         self.title = title
         self.color = color
         self.style = style
-        self.cards = []
+        self.title_pos = title_pos
         self.new_card_y = 2
 
     def draw(self):
         self.win.attron(self.color | self.style)
         self.win.box()
-        self.win.addstr(0, 2, f" {self.title} " if self.title != "" else "")
+        self.win.addstr(0, self.title_pos, f" {self.title} " if self.title != "" else "")
         self.win.attroff(self.color | self.style)
-        for card in self.cards:
-            card.draw()
 
     def refresh(self):
         self.win.refresh()
-        for card in self.cards:
-            card.refresh()
-
-    def add_card(self, project_name, path, file=""):
-        self.cards.append(Card(3, self.w - 4, self.new_card_y, self.x + 2, project_name, path, file))
-        self.new_card_y += 3
-        self.draw()
-        self.refresh()
-
-    def get_card(self, index):
-        return self.cards[index]
-
-    def card_count(self):
-        return len(self.cards)
-
-    def delete_card(self, card):
-        self.cards.remove(card)
-        self.draw()
-        self.refresh()
 
 
 class Card():
-    def __init__(self, h, w, y, x, project_name, path, file=""):
-        self.h, self.w = h, w
-        self.y, self.x = y, x
-        self.win = curses.newwin(self.h, self.w, self.y, self.x)
+    def __init__(self, project_name, path, file=""):
+        self.win = curses.newwin(1, 1)
         self.project_name = project_name
         self.path = path
         self.file = file
@@ -372,21 +283,32 @@ def open_todo():
     pass
 
 
-def make_title():
-    pass
+def init():
+    stdscr.keypad(True)
 
-def draw_ascii(x, y, image, map, bold_color=-1):
-    i = 0
-    cx = x
-    cy = y
-    for line in image:
-        for char in line:
-            this = int(map[i], 16)
-            stdscr.addch(cy, cx, char, curses.color_pair(this) | (curses.A_BOLD if this == bold_color else 0))
-            i += 1
-            cx += 1
-        cy += 1
-        cx = x
+    height, width = stdscr.getmaxyx()
+    x, y = 0, 0
+
+    windows.append(Window(height - 0, width, x, y, HEADER, title_pos=width // 2 - len(HEADER) // 2 - 1, color=WHITE, style=NORMAL))
+
+    section_width = (width - 8) // 4
+    x += 2
+
+    for i in range(len(statuses)):
+        windows.append(Window(height - 2, section_width, 1, x, statuses[i][0], color=statuses[i][1], style=BOLD))
+        x += 2 + section_width
+
+    add_card("ROMs", "/home/sean/code/future/ROMs/")
+    add_card("WotR", "/home/sean/code/paused/godot/Wizards-of-the-Rift/")
+    add_card("LearnScape", "/home/sean/code/paused/LearnScape/")
+    add_card("goverse", "/home/sean/code/active/go/goverse/")
+    add_card("projectarium", "/home/sean/code/active/python/projectarium/", "projectarium.py")
+    add_card("snr", "/home/sean/.config/nvim/lua/snr/", "init.lua")
+    add_card("macro-blues", "/home/sean/code/active/c/macro-blues/", "macro-blues/")
+    add_card("leetcode", "/home/sean/code/paused/leetcode/")
+    add_card("TestTaker", "/home/sean/code/paused/TestTaker/")
+    add_card("Sorter", "/home/sean/code/done/Sorter/", "sorter.py")
+    add_card("landing-page", "/home/sean/code/done/landing-page/", "landing-page.py")
 
 
 def draw():
@@ -398,72 +320,18 @@ def draw():
     curses.noecho()
     curses.set_escdelay(1)
 
-    # Get screen height and width
-    height, width = stdscr.getmaxyx()
-
-    win_height, win_width = 10, 40
-    win_y, win_x = (height - win_height) // 2, (width - win_width) // 2  # Center the window
-
-    win = curses.newwin(win_height, win_width, win_y, win_x)
-
-    # Add a border to the window
-    win.box()
-
-    win.refresh()
     stdscr.refresh()
 
-
-    # stdscr.addstr(11, 6, "NeoVim Shortcuts:", WHITE)
-    # stdscr.addstr(11, 6 + 40, "Directory Shortcuts:", WHITE)
-    # stdscr.addstr(25, 6, "Application Shortcuts:", WHITE)
-
-
-def main(stdscr):
-    draw()
-
-    stdscr.keypad(True)
-    height, width = stdscr.getmaxyx()
-    x, y = 0, 0
-
-    buttons = []
-
-
-    section_width = (width - 8) // 4
-    # buttons.append(Button(height-2, 8, 'q', 'Quit', command='exit'))
-    # buttons.append(Button(height-3, 8, 'e', 'Edit', command='nvim', path='/home/sean/code/in-progress/landing-page/landing-page.py'))
-    screen = Window(height - 0, width, 0, 0, "", color=WHITE, style=NORMAL)
-    x += 2
-    backlog = Window(height - 2, section_width, 1, x, "Backlog", color=BLUE, style=BOLD)
-    x += 2 + backlog.w
-    blocked = Window(height - 2, section_width, 1, x, "Blocked", color=RED, style=BOLD)
-    x += 2 + blocked.w
-    active = Window(height - 2, section_width, 1, x, "Active", color=YELLOW, style=BOLD)
-    x += 2 + active.w
-    done = Window(height - 2, section_width, 1, x, "Done", color=GREEN, style=BOLD)
-    x += 2 + done.w
-    backlog.add_card("ROMs", "/home/sean/code/future/ROMs/")
-    blocked.add_card("WotR", "/home/sean/code/paused/godot/Wizards-of-the-Rift/")
-    blocked.add_card("LearnScape", "/home/sean/code/paused/LearnScape/")
-    active.add_card("goverse", "/home/sean/code/active/go/goverse/")
-    active.add_card("projectarium", "/home/sean/code/active/python/projectarium/", "projectarium.py")
-    active.add_card("snr", "/home/sean/.config/nvim/lua/snr/", "init.lua")
-    active.add_card("macro-blues", "/home/sean/code/active/c/macro-blues/", "macro-blues/")
-    active.add_card("leetcode", "/home/sean/code/paused/leetcode/")
-    active.add_card("TestTaker", "/home/sean/code/paused/TestTaker/")
-    done.add_card("Sorter", "/home/sean/code/done/Sorter/", "sorter.py")
-    done.add_card("landing-page", "/home/sean/code/done/landing-page/", "landing-page.py")
-    windows = [backlog, blocked, active, done]
-    active_window = BACKLOG
-    active_row = 0
-
-
-    screen.draw()
-    screen.refresh()
     for window in windows:
         window.draw()
         window.refresh()
-    windows[active_window].get_card(active_row).activate()
 
+
+
+def main(stdscr):
+    global active_card
+    init()
+    draw()
 
     valid_keys = {
             'c',
@@ -479,9 +347,6 @@ def main(stdscr):
     # Main loop
     while True:
         # get and handle input
-        for button in buttons:
-            button.draw()
-        og_row, og_window = active_row, active_window
         key = stdscr.getkey()
         if key == 'q' or key == '\x1b':
             log.info("Quitting...")
@@ -489,75 +354,63 @@ def main(stdscr):
         if key == ' ':
             continue
         if key == 'a':
-            windows[active_window].add_card("another", "/some/path")
+            add_card("another", "/some/path")
             continue
-        if key == "KEY_DOWN":
-            active_row += 1
-            if active_row >= windows[active_window].card_count():
-                active_row = windows[active_window].card_count() - 1
-            if active_row != og_row:
-                windows[og_window].get_card(og_row).deactivate()
-            windows[active_window].get_card(active_row).activate()
-        if key == "KEY_UP":
-            active_row -= 1
-            if active_row < 0:
-                active_row = 0
-            if active_row != og_row:
-                windows[og_window].get_card(og_row).deactivate()
-            windows[active_window].get_card(active_row).activate()
-        if key == "KEY_RIGHT":
-            active_window += 1
-            if active_window > 3:
-                active_window = 3
-            active_row = min(active_row, windows[active_window].card_count() - 1)
-            if active_window != og_window:
-                windows[og_window].get_card(og_row).deactivate()
-            windows[active_window].get_card(active_row).activate()
-        if key == "KEY_LEFT":
-            active_window -= 1
-            if active_window < 0:
-                active_window = 0
-            active_row = min(active_row, windows[active_window].card_count() - 1)
-            if active_window != og_window:
-                windows[og_window].get_card(og_row).deactivate()
-            windows[active_window].get_card(active_row).activate()
+        # if key == "KEY_DOWN":
+        #     active_row += 1
+        #     if active_row >= windows[active_window].card_count():
+        #         active_row = windows[active_window].card_count() - 1
+        #     if active_row != og_row:
+        #         windows[og_window].get_card(og_row).deactivate()
+        #     windows[active_window].get_card(active_row).activate()
+        # if key == "KEY_UP":
+        #     active_row -= 1
+        #     if active_row < 0:
+        #         active_row = 0
+        #     if active_row != og_row:
+        #         windows[og_window].get_card(og_row).deactivate()
+        #     windows[active_window].get_card(active_row).activate()
+        # if key == "KEY_RIGHT":
+        #     active_window += 1
+        #     if active_window > 3:
+        #         active_window = 3
+        #     active_row = min(active_row, windows[active_window].card_count() - 1)
+        #     if active_window != og_window:
+        #         windows[og_window].get_card(og_row).deactivate()
+        #     windows[active_window].get_card(active_row).activate()
+        # if key == "KEY_LEFT":
+        #     active_window -= 1
+        #     if active_window < 0:
+        #         active_window = 0
+        #     active_row = min(active_row, windows[active_window].card_count() - 1)
+        #     if active_window != og_window:
+        #         windows[og_window].get_card(og_row).deactivate()
+        #     windows[active_window].get_card(active_row).activate()
 
         if key == 'c':
-            os.system(TERMINAL_PREFIX + windows[active_window].get_card(active_row).path)
+            # os.system(TERMINAL_PREFIX + windows[active_window].get_card(active_row).path)
             continue
         if key == 'n':
-            os.system(NEOVIM_PREFIX + windows[active_window].get_card(active_row).path + windows[active_window].get_card(active_row).file)
+            # os.system(NEOVIM_PREFIX + active_card.path + active_card.file)
             continue
         if key == 't':
             # open_todo(windows[active_window].get_card(active_row).project_name)
             continue
         if key == 'p':
-            temp_card = windows[active_window].get_card(active_row)
-            windows[active_window].delete_card(temp_card)
-            windows[active_window + 1].add_card(temp_card.project_name, temp_card.path)
+            # temp_card = windows[active_window].get_card(active_row)
+            # windows[active_window].delete_card(temp_card)
+            # windows[active_window + 1].add_card(temp_card.project_name, temp_card.path)
             continue
         if key == 'r':
-            temp_card = windows[active_window].get_card(active_row)
-            windows[active_window].delete_card(temp_card)
-            windows[active_window - 1].add_card(temp_card.project_name, temp_card.path)
+            # temp_card = windows[active_window].get_card(active_row)
+            # windows[active_window].delete_card(temp_card)
+            # windows[active_window - 1].add_card(temp_card.project_name, temp_card.path)
             continue
         if key in valid_keys:
-            log.info(f"'{key}' action: {actions[key].split()}")
-            if key == key.lower():
-                if key == 'r':
-                    os.system("/home/sean/applications/RuneLite.AppImage --scale 2 > /tmp/runelite.log")
-                else:
-                    subprocess.run(actions[key].split())
-            else:
-                exec(actions[key])
             draw()
             stdscr.refresh()
         else:
             log.error(f"Invalid key {key}")
-
-
-        # update the screen
-        stdscr.refresh()
 
 if __name__ == "__main__":
     curses.wrapper(main)
