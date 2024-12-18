@@ -23,6 +23,8 @@ import time
 
 import logging
 
+import sqlite3
+
 # Configure logging
 logging.basicConfig(filename='debug.log', level=logging.DEBUG, filemode='w',
                     format='%(asctime)s - %(levelname)s - %(message)s')
@@ -179,52 +181,142 @@ TERMINAL_PREFIX = "gnome-terminal --maximize --working-directory="
 NEOVIM_PREFIX = "nvim "
 actions = {}
 
-statuses = [("Backlog", BLUE), ("Blocked", RED), ("Active", YELLOW), ("Done", GREEN)]
-windows = []
-# FRAME = 0
+DB_PATH = "projectarium.db"
+
+FRAME = 0
 BACKLOG = 1
 BLOCKED = 2
 ACTIVE = 3
 DONE = 4
 
-cards = []
-active_card = None
+statuses = {
+    BACKLOG: (BLUE, "Backlog"),
+    BLOCKED: (RED, "Blocked"),
+    ACTIVE: (YELLOW, "Active"),
+    DONE: (GREEN, "Done"),
+}
+windows = []
+
+active_card = -1
+active_window = 0
+def increment_active_card():
+    global active_card
+    a_win = windows[active_window]
+    if active_card < len(a_win.cards) - 1:
+        a_win.cards[active_card].deactivate()
+        active_card += 1
+        a_win.cards[active_card].activate()
+        a_win.draw()
+        a_win.refresh()
+
+def decrement_active_card():
+    global active_card
+    if active_card > 0:
+        windows[active_window].cards[active_card].deactivate()
+        windows[active_window].cards[active_card].shove(True)
+        active_card -= 1
+        windows[active_window].cards[active_card].activate()
+        windows[active_window].draw()
+        windows[active_window].refresh()
+
+# def increment_active_window():
+#     global active_window
+#     active_window += 1
+# def decrement_active_window():
+#     global active_window
+#     active_window -= 1
 
 
-def add_card(project_name, path, file=""):
-    cards.append(Card(project_name, path, file))
+# def add_card(name, path, file=""):
+    # cards.append(Card(name, path, file))
 
 class Window:
-    def __init__(self, height, width, y, x, title="", title_pos=2, color=WHITE, style=NORMAL):
+    def __init__(self, id, height, width, y, x, conn, title, title_pos=2, color=WHITE, style=NORMAL):
+        self.id = id
         self.h = height
         self.w = width
         self.y = y
         self.x = x
         self.win = curses.newwin(self.h, self.w, self.y, self.x)
+        self.conn = conn
+        self.cursor = self.conn.cursor()
         self.title = title
         self.color = color
         self.style = style
         self.title_pos = title_pos
-        self.new_card_y = 2
+        self.cards = []
+        self.card_offset = 0
+        self.last_active = active_card
+
+    def pull(self):
+        self.cursor.execute("SELECT * FROM projects WHERE status = ? ORDER BY LOWER(name);", (self.title,))
+        rows = self.cursor.fetchall()
+        for row in rows:
+            self.cards.append(Card(3, self.w, self.y + self.card_offset, self.x + 2, row[1], row[3], row[5]))
+            self.card_offset += 3
+
+    def contains(self, name):
+        # for card in self.cards:
+        # if name in lambda x: self.cards[x].name:
+            # print("fail")
+        pass
+
+    def draw_cards(self):
+        shove = False
+        for card in self.cards:
+            card.win.erase()
+            if card.active:
+                card.height = 6
+                card.active = True
+                card.color = ORANGE
+                card.unshove()
+                shove = True # aka found active
+            else:
+                card.height = 3
+                card.active = False
+                card.color = WHITE
+                if shove:
+                    card.shove()
+                    card.is_shoved = True
+                # else:
+                #     card.scrunch()
+                #     card.is_scrunched = True
+            card.win.resize(card.height, card.width - 4)
+
+            card.win.attron(card.color | BOLD)
+            card.win.box()
+            card.win.addstr(1, 2, card.name)
+            card.win.attroff(card.color | BOLD)
+
+            card.refresh()
 
     def draw(self):
         self.win.attron(self.color | self.style)
         self.win.box()
         self.win.addstr(0, self.title_pos, f" {self.title} " if self.title != "" else "")
         self.win.attroff(self.color | self.style)
+        self.win.refresh()
+
+        self.draw_cards()
 
     def refresh(self):
         self.win.refresh()
 
 
 class Card():
-    def __init__(self, project_name, path, file=""):
-        self.win = curses.newwin(1, 1)
-        self.project_name = project_name
+    def __init__(self, height, width, y, x, name, path, file=""):
+        self.height = height
+        self.width = width
+        self.y = y
+        self.x = x
+        self.win = curses.newwin(self.height, self.width - 4, self.y + 1, self.x)
+        self.name = name
         self.path = path
         self.file = file
         self.active = False
         self.color = WHITE
+        self.is_shoved = False
+        self.is_scrunched = False
 
     def draw_active(self):
         strings = ["    cd", "nvim", "      todo", "progress", "regress"]
@@ -258,60 +350,115 @@ class Card():
             # self.draw_active()
         # else:
             # self.clear()
-        self.win.attron(self.color | BOLD)
-        self.win.box()
-        self.win.addstr(1, 2, self.project_name)
-        self.win.attroff(self.color | BOLD)
+        pass
 
     def refresh(self):
         self.win.refresh()
 
     def activate(self):
-        self.h = 6
         self.active = True
-        self.color = ORANGE
-        self.draw()
-        self.refresh()
 
     def deactivate(self):
         self.active = False
-        self.color = WHITE
-        self.draw()
-        self.refresh()
+
+    def shove(self, force=False):
+        if not self.is_shoved or force:
+            self.win.mvwin(self.y + 4, self.x)
+
+    def unshove(self):
+        if self.is_shoved:
+            self.win.mvwin(self.y + 1, self.x)
+
+    # def scrunch(self):
+    #     if not self.is_scrunched:
+    #         self.y -= 3
+    #         self.win.mvwin(self.y + 1, self.x)
 
 def open_todo():
     pass
 
 
 def init():
+    global active_card, active_window
     stdscr.keypad(True)
 
     height, width = stdscr.getmaxyx()
     x, y = 0, 0
+    conn = sqlite3.connect(DB_PATH)
 
-    windows.append(Window(height - 0, width, x, y, HEADER, title_pos=width // 2 - len(HEADER) // 2 - 1, color=WHITE, style=NORMAL))
+    windows.append(Window(FRAME, height, width, x, y, conn, HEADER, title_pos=width // 2 - len(HEADER) // 2 - 1, color=WHITE, style=NORMAL))
 
     section_width = (width - 8) // 4
     x += 2
 
     for i in range(len(statuses)):
-        windows.append(Window(height - 2, section_width, 1, x, statuses[i][0], color=statuses[i][1], style=BOLD))
+        windows.append(Window(list(statuses.keys())[i], height - 2, section_width, 1, x, conn, statuses[i+1][1], color=statuses[i+1][0], style=BOLD))
         x += 2 + section_width
 
-    add_card("ROMs", "/home/sean/code/future/ROMs/")
-    add_card("WotR", "/home/sean/code/paused/godot/Wizards-of-the-Rift/")
-    add_card("LearnScape", "/home/sean/code/paused/LearnScape/")
-    add_card("goverse", "/home/sean/code/active/go/goverse/")
-    add_card("projectarium", "/home/sean/code/active/python/projectarium/", "projectarium.py")
-    add_card("snr", "/home/sean/.config/nvim/lua/snr/", "init.lua")
-    add_card("macro-blues", "/home/sean/code/active/c/macro-blues/", "macro-blues/")
-    add_card("leetcode", "/home/sean/code/paused/leetcode/")
-    add_card("TestTaker", "/home/sean/code/paused/TestTaker/")
-    add_card("Sorter", "/home/sean/code/done/Sorter/", "sorter.py")
-    add_card("landing-page", "/home/sean/code/done/landing-page/", "landing-page.py")
+    # Connect to database (or create it if it doesn't exist)
+    cursor = conn.cursor()
+
+    # Create the 'projects' table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS projects (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            description TEXT,
+            path TEXT NOT NULL,
+            file TEXT,
+            status TEXT NOT NULL
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS todo (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            description TEXT NOT NULL,
+            priority TEXT,
+            project_id,
+            FOREIGN KEY (project_id) REFERENCES projects (id)
+        )
+    ''')
+
+    # Optional: Insert some default data only if the database is empty
+    cursor.execute("SELECT COUNT(*) FROM projects")
+    if cursor.fetchone()[0] == 0:
+        default_projects = [
+            ("ROMs", "~/code/future/ROMs/", "Backlog"),
+            ("WotR", "~/code/paused/godot/Wizards-of-the-Rift/", "Backlog"),
+            ("LearnScape", "~/code/paused/LearnScape/", "Blocked"),
+            ("goverse", "~/code/active/go/goverse/", "Active"),
+            ("projectarium", "~/code/active/python/projectarium/", "Active"),
+            ("snr", "/home/sean/.config/nvim/lua/snr/", "Backlog"),
+            ("macro-blues", "/home/sean/code/active/c/macro-blues/", "Active"),
+            ("leetcode", "/home/sean/code/paused/leetcode/", "Active"),
+            ("TestTaker", "/home/sean/code/paused/TestTaker/", "Active"),
+            ("Sorter", "~/code/done/Sorter/", "Done"),
+            ("landing-page", "~/code/done/landing-page/", "Done"),
+        ]
+        cursor.executemany('''
+            INSERT INTO projects (name, path, status)
+            VALUES (?, ?, ?)
+        ''', default_projects)
+
+    # Commit changes and close connection
+    conn.commit()
+    # conn.close()
+
+    win_set = False
+    for window in windows:
+        window.pull()
+        if len(window.cards) > 0 and not win_set:
+            win_set = True
+            active_card = 0
+            active_window = window.id
+            window.cards[active_card].activate()
+        
+
 
 
 def draw():
+    global active_card, active_window
     # Clear screen
     stdscr.clear()
 
@@ -323,39 +470,50 @@ def draw():
     stdscr.refresh()
 
     for window in windows:
+        if active_card == -1 and len(window.cards) > 0:
+            active_card = 0
+        if active_window == None:
+            active_window = window,
         window.draw()
         window.refresh()
+        # for card in window.cards:
+            # card.draw()
+            # card.refresh()
 
 
+keymaps = {
+    "q": lambda: exit(0),
+    "\x1b": lambda: exit(0),
+
+    "c": lambda: os.system(TERMINAL_PREFIX + ""),
+    # "n": lambda: ,
+    # "t": lambda: ,
+    # "p": lambda: ,
+    # "r": lambda: ,
+
+    # "KEY_LEFT": lambda: ,
+    # "KEY_RIGHT": lambda: ,
+    "KEY_UP": lambda: decrement_active_card(),
+    "KEY_DOWN": lambda: increment_active_card(),
+
+    # "": lambda: ,
+}
 
 def main(stdscr):
     global active_card
     init()
     draw()
 
-    valid_keys = {
-            'c',
-            'n',
-            't',
-            'r',
-            'p',
-            'a',
-            ' ',
-            '\x1b'
-            }
-
     # Main loop
     while True:
         # get and handle input
         key = stdscr.getkey()
-        if key == 'q' or key == '\x1b':
-            log.info("Quitting...")
-            exit(0)
-        if key == ' ':
-            continue
-        if key == 'a':
-            add_card("another", "/some/path")
-            continue
+        if key not in keymaps: continue
+        keymaps[key]()
+
+        # if key == 'a':
+        #     add_card("another", "/some/path")
+        #     continue
         # if key == "KEY_DOWN":
         #     active_row += 1
         #     if active_row >= windows[active_window].card_count():
@@ -388,7 +546,7 @@ def main(stdscr):
         #     windows[active_window].get_card(active_row).activate()
 
         if key == 'c':
-            # os.system(TERMINAL_PREFIX + windows[active_window].get_card(active_row).path)
+            # os.system(TERMINAL_PREFIX + windows[active_window].get_card(active_card).path)
             continue
         if key == 'n':
             # os.system(NEOVIM_PREFIX + active_card.path + active_card.file)
@@ -406,9 +564,9 @@ def main(stdscr):
             # windows[active_window].delete_card(temp_card)
             # windows[active_window - 1].add_card(temp_card.project_name, temp_card.path)
             continue
-        if key in valid_keys:
-            draw()
-            stdscr.refresh()
+        # if key in valid_keys:
+            # draw()
+            # stdscr.refresh()
         else:
             log.error(f"Invalid key {key}")
 
