@@ -197,8 +197,8 @@ statuses = {
 }
 windows = []
 
-active_card = -1
-active_window = 0
+active_card: int = -1
+active_window: int = 0
 def increment_active_card():
     global active_card
     a_win = windows[active_window]
@@ -211,20 +211,57 @@ def increment_active_card():
 
 def decrement_active_card():
     global active_card
+    a_win = windows[active_window]
     if active_card > 0:
-        windows[active_window].cards[active_card].deactivate()
-        windows[active_window].cards[active_card].shove(True)
+        a_win.cards[active_card].deactivate()
+        a_win.cards[active_card].shove(True)
         active_card -= 1
-        windows[active_window].cards[active_card].activate()
-        windows[active_window].draw()
-        windows[active_window].refresh()
+        a_win.cards[active_card].activate()
+        a_win.draw()
+        a_win.refresh()
 
-# def increment_active_window():
-#     global active_window
-#     active_window += 1
-# def decrement_active_window():
-#     global active_window
-#     active_window -= 1
+def increment_active_window():
+    global active_window, active_card
+    if active_window < len(windows) -1:
+        a_win = windows[active_window]
+        a_win.cards[active_card].deactivate()
+        a_win.scrunch()
+        a_win.draw()
+        a_win.refresh()
+        active_window += 1
+        if active_window > len(windows):
+            return
+        n_a_win = windows[active_window]
+        if len(n_a_win.cards) > 0:
+            active_card = min(len(a_win.cards) - 1, len(n_a_win.cards) - 1, active_card) 
+            n_a_win.cards[active_card].activate()
+            for to_shove in n_a_win.cards[active_card+1:]:
+                to_shove.shove(True)
+        else:
+            active_card = -1
+        n_a_win.draw()
+        n_a_win.refresh()
+    
+def decrement_active_window():
+    global active_window, active_card
+    if active_window > 1:
+        a_win = windows[active_window]
+        a_win.cards[active_card].deactivate()
+        a_win.scrunch()
+        a_win.draw()
+        a_win.refresh()
+        active_window -= 1
+        n_a_win = windows[active_window]
+        if len(a_win.cards) > 0:
+            active_card = min(len(a_win.cards) - 1, len(n_a_win.cards) - 1, active_card) 
+            n_a_win.cards[active_card].activate()
+            for to_shove in n_a_win.cards[active_card+1:]:
+                to_shove.shove(True)
+            
+        else:
+            active_card = -1
+        n_a_win.draw()
+        n_a_win.refresh()
 
 
 # def add_card(name, path, file=""):
@@ -260,6 +297,10 @@ class Window:
         # if name in lambda x: self.cards[x].name:
             # print("fail")
         pass
+
+    def scrunch(self):
+        for card in self.cards:
+            card.unshove()
 
     def draw_cards(self):
         shove = False
@@ -369,11 +410,6 @@ class Card():
         if self.is_shoved:
             self.win.mvwin(self.y + 1, self.x)
 
-    # def scrunch(self):
-    #     if not self.is_scrunched:
-    #         self.y -= 3
-    #         self.win.mvwin(self.y + 1, self.x)
-
 def open_todo():
     pass
 
@@ -425,11 +461,11 @@ def init():
     if cursor.fetchone()[0] == 0:
         default_projects = [
             ("ROMs", "~/code/future/ROMs/", "Backlog"),
-            ("WotR", "~/code/paused/godot/Wizards-of-the-Rift/", "Backlog"),
+            ("WotR", "~/code/paused/godot/Wizards-of-the-Rift/", "Blocked"),
             ("LearnScape", "~/code/paused/LearnScape/", "Blocked"),
             ("goverse", "~/code/active/go/goverse/", "Active"),
             ("projectarium", "~/code/active/python/projectarium/", "Active"),
-            ("snr", "/home/sean/.config/nvim/lua/snr/", "Backlog"),
+            ("snr", "/home/sean/.config/nvim/lua/snr/", "Active"),
             ("macro-blues", "/home/sean/code/active/c/macro-blues/", "Active"),
             ("leetcode", "/home/sean/code/paused/leetcode/", "Active"),
             ("TestTaker", "/home/sean/code/paused/TestTaker/", "Active"),
@@ -470,15 +506,11 @@ def draw():
     stdscr.refresh()
 
     for window in windows:
-        if active_card == -1 and len(window.cards) > 0:
+        if active_card == -1 and len(window.cards) > 0 and active_window == 0:
             active_card = 0
-        if active_window == None:
-            active_window = window,
+            active_window = window.id,
         window.draw()
         window.refresh()
-        # for card in window.cards:
-            # card.draw()
-            # card.refresh()
 
 
 keymaps = {
@@ -491,8 +523,8 @@ keymaps = {
     # "p": lambda: ,
     # "r": lambda: ,
 
-    # "KEY_LEFT": lambda: ,
-    # "KEY_RIGHT": lambda: ,
+    "KEY_LEFT": lambda: decrement_active_window(),
+    "KEY_RIGHT": lambda: increment_active_window(),
     "KEY_UP": lambda: decrement_active_card(),
     "KEY_DOWN": lambda: increment_active_card(),
 
