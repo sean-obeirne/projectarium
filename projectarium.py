@@ -224,21 +224,23 @@ def increment_active_window():
     global active_window, active_card
     if active_window < len(windows) -1:
         a_win = windows[active_window]
-        a_win.cards[active_card].deactivate()
+        if a_win.has_cards():
+            a_win.cards[active_card].deactivate()
         a_win.scrunch()
         a_win.draw()
         a_win.refresh()
         active_window += 1
-        if active_window > len(windows):
-            return
         n_a_win = windows[active_window]
         if len(n_a_win.cards) > 0:
             active_card = min(len(a_win.cards) - 1, len(n_a_win.cards) - 1, active_card) 
+            if active_card == -1:
+                active_card = 0
             n_a_win.cards[active_card].activate()
             for to_shove in n_a_win.cards[active_card+1:]:
                 to_shove.shove(True)
         else:
             active_card = -1
+            increment_active_window()
         n_a_win.draw()
         n_a_win.refresh()
     
@@ -246,20 +248,25 @@ def decrement_active_window():
     global active_window, active_card
     if active_window > 1:
         a_win = windows[active_window]
-        a_win.cards[active_card].deactivate()
-        a_win.scrunch()
+        if a_win.has_cards():
+            a_win.cards[active_card].deactivate()
+            a_win.scrunch()
         a_win.draw()
         a_win.refresh()
         active_window -= 1
         n_a_win = windows[active_window]
-        if len(a_win.cards) > 0:
+        if len(n_a_win.cards) > 0:
             active_card = min(len(a_win.cards) - 1, len(n_a_win.cards) - 1, active_card) 
-            n_a_win.cards[active_card].activate()
+            if active_card == -1:
+                active_card = 0
+            if n_a_win.has_cards():
+                n_a_win.cards[active_card].activate()
             for to_shove in n_a_win.cards[active_card+1:]:
                 to_shove.shove(True)
             
         else:
             active_card = -1
+            decrement_active_window() # TODOD: make this impossible
         n_a_win.draw()
         n_a_win.refresh()
 
@@ -285,11 +292,16 @@ class Window:
         self.card_offset = 0
         self.last_active = active_card
 
+    def has_cards(self):
+        return len(self.cards) > 0
+
     def pull(self):
         self.cursor.execute("SELECT * FROM projects WHERE status = ? ORDER BY LOWER(name);", (self.title,))
         rows = self.cursor.fetchall()
+        self.cards.clear()
+        self.card_offset = 0
         for row in rows:
-            self.cards.append(Card(3, self.w, self.y + self.card_offset, self.x + 2, row[1], row[3], row[5]))
+            self.cards.append(Card(3, self.w, self.y + self.card_offset, self.x + 2, row[1], row[3], row[4]))
             self.card_offset += 3
 
     def contains(self, name):
@@ -301,6 +313,54 @@ class Window:
     def scrunch(self):
         for card in self.cards:
             card.unshove()
+
+    def regress(self):
+        global active_window
+        if active_window <= 1:
+            return
+        self.cursor.execute('''
+            UPDATE projects SET status = ? WHERE name = ?
+        ''', (windows[active_window - 1].title, windows[active_window].cards[active_card].name))
+        active_window -= 1
+        progress_card_name = self.cards[active_card].name
+        self.pull()
+        windows[active_window].pull()
+        self.conn.commit()
+        self.draw()
+        self.refresh()
+        windows[active_window].activate_one(progress_card_name)
+        windows[active_window].draw()
+        windows[active_window].refresh()
+        log.info(self.title + " REGRESSED TO " + windows[active_window].title)
+
+    def progress(self):
+        global active_window
+        if active_window >= 4:
+            return
+        self.cursor.execute('''
+            UPDATE projects SET status = ? WHERE name = ?
+        ''', (windows[active_window + 1].title, windows[active_window].cards[active_card].name))
+        active_window += 1
+        progress_card_name = self.cards[active_card].name
+        self.pull()
+        windows[active_window].pull()
+        self.conn.commit()
+        self.draw()
+        self.refresh()
+        windows[active_window].activate_one(progress_card_name)
+        windows[active_window].draw()
+        windows[active_window].refresh()
+        log.info(self.title + " PROGRESSED TO " + windows[active_window].title)
+
+    def activate_one(self, name):
+        global active_card
+        for i, card in enumerate(self.cards):
+            card.deactivate()
+            if card.name == name:
+                active_card = i
+                card.activate()
+                self.draw()
+                self.refresh()
 
     def draw_cards(self):
         shove = False
@@ -319,9 +379,6 @@ class Window:
                 if shove:
                     card.shove()
                     card.is_shoved = True
-                # else:
-                #     card.scrunch()
-                #     card.is_scrunched = True
             card.win.resize(card.height, card.width - 4)
 
             card.win.attron(card.color | BOLD)
@@ -410,6 +467,9 @@ class Card():
         if self.is_shoved:
             self.win.mvwin(self.y + 1, self.x)
 
+
+
+
 def open_todo():
     pass
 
@@ -460,21 +520,21 @@ def init():
     cursor.execute("SELECT COUNT(*) FROM projects")
     if cursor.fetchone()[0] == 0:
         default_projects = [
-            ("ROMs", "~/code/future/ROMs/", "Backlog"),
-            ("WotR", "~/code/paused/godot/Wizards-of-the-Rift/", "Blocked"),
-            ("LearnScape", "~/code/paused/LearnScape/", "Blocked"),
-            ("goverse", "~/code/active/go/goverse/", "Active"),
-            ("projectarium", "~/code/active/python/projectarium/", "Active"),
-            ("snr", "/home/sean/.config/nvim/lua/snr/", "Active"),
-            ("macro-blues", "/home/sean/code/active/c/macro-blues/", "Active"),
-            ("leetcode", "/home/sean/code/paused/leetcode/", "Active"),
-            ("TestTaker", "/home/sean/code/paused/TestTaker/", "Active"),
-            ("Sorter", "~/code/done/Sorter/", "Done"),
-            ("landing-page", "~/code/done/landing-page/", "Done"),
+            ("ROMs",        "/home/sean/code/future/ROMs/",                     "",                 "Backlog"),
+            ("WotR",        "/home/sean/code/paused/godot/Wizards-of-the-Rift/","",                 "Blocked"),
+            ("LearnScape",  "/home/sean/code/paused/LearnScape/",               "learnscape.py",    "Blocked"),
+            ("goverse",     "/home/sean/code/active/go/goverse/",               "cli/main.go",      "Active"),
+            ("projectarium","/home/sean/code/active/python/projectarium/",      "projectarium.py",  "Active"),
+            ("snr",         "/home/sean/.config/nvim/lua/snr/",                 "init.lua",         "Active"),
+            ("macro-blues", "/home/sean/code/active/c/macro-blues/",            "macro-blues",      "Active"),
+            ("leetcode",    "/home/sean/code/paused/leetcode/",                 "",                 "Active"),
+            ("TestTaker",   "/home/sean/code/paused/TestTaker/",                "tettaker.py",      "Active"),
+            ("Sorter",      "/home/sean/code/done/Sorter/",                     "sorter.py",        "Done"),
+            ("landing-page","/home/sean/code/done/landing-page/",               "landing-page.py",  "Done"),
         ]
         cursor.executemany('''
-            INSERT INTO projects (name, path, status)
-            VALUES (?, ?, ?)
+            INSERT INTO projects (name, path, file, status)
+            VALUES (?, ?, ?, ?)
         ''', default_projects)
 
     # Commit changes and close connection
@@ -517,11 +577,13 @@ keymaps = {
     "q": lambda: exit(0),
     "\x1b": lambda: exit(0),
 
-    "c": lambda: os.system(TERMINAL_PREFIX + ""),
-    # "n": lambda: ,
+    " ": lambda: draw(),
+
+    "c": lambda: os.system(TERMINAL_PREFIX + windows[active_window].cards[active_card].path),
+    "n": lambda: os.system(TERMINAL_PREFIX + windows[active_window].cards[active_card].path + " -- bash -c \'" +  NEOVIM_PREFIX + windows[active_window].cards[active_card].file + "\'") if windows[active_window].cards[active_card].file != "" else "",
     # "t": lambda: ,
-    # "p": lambda: ,
-    # "r": lambda: ,
+    "p": lambda: windows[active_window].progress(),
+    "r": lambda: windows[active_window].regress(),
 
     "KEY_LEFT": lambda: decrement_active_window(),
     "KEY_RIGHT": lambda: increment_active_window(),
@@ -546,37 +608,6 @@ def main(stdscr):
         # if key == 'a':
         #     add_card("another", "/some/path")
         #     continue
-        # if key == "KEY_DOWN":
-        #     active_row += 1
-        #     if active_row >= windows[active_window].card_count():
-        #         active_row = windows[active_window].card_count() - 1
-        #     if active_row != og_row:
-        #         windows[og_window].get_card(og_row).deactivate()
-        #     windows[active_window].get_card(active_row).activate()
-        # if key == "KEY_UP":
-        #     active_row -= 1
-        #     if active_row < 0:
-        #         active_row = 0
-        #     if active_row != og_row:
-        #         windows[og_window].get_card(og_row).deactivate()
-        #     windows[active_window].get_card(active_row).activate()
-        # if key == "KEY_RIGHT":
-        #     active_window += 1
-        #     if active_window > 3:
-        #         active_window = 3
-        #     active_row = min(active_row, windows[active_window].card_count() - 1)
-        #     if active_window != og_window:
-        #         windows[og_window].get_card(og_row).deactivate()
-        #     windows[active_window].get_card(active_row).activate()
-        # if key == "KEY_LEFT":
-        #     active_window -= 1
-        #     if active_window < 0:
-        #         active_window = 0
-        #     active_row = min(active_row, windows[active_window].card_count() - 1)
-        #     if active_window != og_window:
-        #         windows[og_window].get_card(og_row).deactivate()
-        #     windows[active_window].get_card(active_row).activate()
-
         if key == 'c':
             # os.system(TERMINAL_PREFIX + windows[active_window].get_card(active_card).path)
             continue
@@ -596,11 +627,6 @@ def main(stdscr):
             # windows[active_window].delete_card(temp_card)
             # windows[active_window - 1].add_card(temp_card.project_name, temp_card.path)
             continue
-        # if key in valid_keys:
-            # draw()
-            # stdscr.refresh()
-        else:
-            log.error(f"Invalid key {key}")
 
 if __name__ == "__main__":
     curses.wrapper(main)
