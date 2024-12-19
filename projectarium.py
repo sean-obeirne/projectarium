@@ -188,6 +188,7 @@ BACKLOG = 1
 BLOCKED = 2
 ACTIVE = 3
 DONE = 4
+HELP = 5
 
 statuses = {
     BACKLOG: (BLUE, "Backlog"),
@@ -208,6 +209,8 @@ def increment_active_card():
         a_win.cards[active_card].activate()
         a_win.draw()
         a_win.refresh()
+        windows[HELP].draw_help()
+        windows[HELP].refresh()
 
 def decrement_active_card():
     global active_card
@@ -219,10 +222,12 @@ def decrement_active_card():
         a_win.cards[active_card].activate()
         a_win.draw()
         a_win.refresh()
+        windows[HELP].draw_help()
+        windows[HELP].refresh()
 
 def increment_active_window():
     global active_window, active_card
-    if active_window < len(windows) -1:
+    if active_window < len(windows) - 2:
         a_win = windows[active_window]
         if a_win.has_cards():
             a_win.cards[active_card].deactivate()
@@ -243,6 +248,8 @@ def increment_active_window():
             increment_active_window()
         n_a_win.draw()
         n_a_win.refresh()
+        windows[HELP].draw_help()
+        windows[HELP].refresh()
     
 def decrement_active_window():
     global active_window, active_card
@@ -269,6 +276,8 @@ def decrement_active_window():
             decrement_active_window() # TODOD: make this impossible
         n_a_win.draw()
         n_a_win.refresh()
+        windows[HELP].draw_help()
+        windows[HELP].refresh()
 
 
 # def add_card(name, path, file=""):
@@ -301,7 +310,7 @@ class Window:
         self.cards.clear()
         self.card_offset = 0
         for row in rows:
-            self.cards.append(Card(3, self.w, self.y + self.card_offset, self.x + 2, row[1], row[3], row[4]))
+            self.cards.append(Card(3, self.w, self.y + self.card_offset, self.x + 2, row[1], row[3], row[4], row[2]))
             self.card_offset += 3
 
     def contains(self, name):
@@ -331,7 +340,8 @@ class Window:
         windows[active_window].activate_one(progress_card_name)
         windows[active_window].draw()
         windows[active_window].refresh()
-        log.info(self.title + " REGRESSED TO " + windows[active_window].title)
+        windows[HELP].draw_help()
+        windows[HELP].refresh()
 
     def progress(self):
         global active_window
@@ -350,7 +360,8 @@ class Window:
         windows[active_window].activate_one(progress_card_name)
         windows[active_window].draw()
         windows[active_window].refresh()
-        log.info(self.title + " PROGRESSED TO " + windows[active_window].title)
+        windows[HELP].draw_help()
+        windows[HELP].refresh()
 
     def activate_one(self, name):
         global active_card
@@ -361,6 +372,25 @@ class Window:
                 card.activate()
                 self.draw()
                 self.refresh()
+
+    def draw_help(self):
+        strings = ["cd", "nvim", "description", "todo", "progress", "regress"]
+        y = 1
+        x = 4
+        for string in strings:
+            self.win.addstr(y, x, f"{string[0]}: ", CYAN)
+            x += 3
+            if (active_window == 1 and string == "regress") \
+                or (active_window == HELP-1 and string == "progress") \
+                or (windows[active_window].cards[active_card].file in (None, "") and string == "nvim") \
+                or (windows[active_window].cards[active_card].path == "" and string == "cd") \
+                or (windows[active_window].cards[active_card].description in(None, "") and string == "description"):
+                color = DARK_GREY
+            else:
+                color = WHITE
+            self.win.addstr(y, x, f"{string}", color)
+            x += len(string) + 5
+
 
     def draw_cards(self):
         shove = False
@@ -385,14 +415,20 @@ class Window:
             card.win.box()
             card.win.addstr(1, 2, card.name)
             card.win.attroff(card.color | BOLD)
+            card.win.attron(WHITE)
+            if card.active:
+                card.win.addstr(2, 4, f"file: {card.file}") if card.file not in (None, "") else ""
+            card.win.attroff(WHITE)
 
             card.refresh()
 
     def draw(self):
         self.win.attron(self.color | self.style)
         self.win.box()
-        self.win.addstr(0, self.title_pos, f" {self.title} " if self.title != "" else "")
+        self.win.addstr(0, self.title_pos, f" {self.title}{" (" + str(len(self.cards)) + ") " if self.id not in (FRAME, HELP) else " "}" if self.title != "" else "")
         self.win.attroff(self.color | self.style)
+        if self.id == HELP:
+            self.draw_help()
         self.win.refresh()
 
         self.draw_cards()
@@ -402,7 +438,7 @@ class Window:
 
 
 class Card():
-    def __init__(self, height, width, y, x, name, path, file=""):
+    def __init__(self, height, width, y, x, name, path, file="", description=""):
         self.height = height
         self.width = width
         self.y = y
@@ -411,34 +447,11 @@ class Card():
         self.name = name
         self.path = path
         self.file = file
+        self.description = description
         self.active = False
         self.color = WHITE
         self.is_shoved = False
         self.is_scrunched = False
-
-    def draw_active(self):
-        strings = ["    cd", "nvim", "      todo", "progress", "regress"]
-        colors = [WHITE, WHITE, DIM_WHITE, DARK_GREY, DARK_GREY]
-        y = 2
-        x = 4
-        for i, string in enumerate(strings):
-            leading_spaces = len(string) - len(string.lstrip())
-            self.win.addstr(y, x, " " * leading_spaces, colors[i])  # Add leading spaces
-            x += leading_spaces
-
-
-            self.win.addch(y, x, '[', CYAN)
-            x += 1
-            self.win.addch(y, x, string.lstrip()[0], colors[i])
-            x += 1
-            self.win.addch(y, x, ']', CYAN)
-            x += 1
-            self.win.addstr(y, x, string.lstrip()[1:], colors[i])
-            x += len(string.lstrip()[1:]) + 2
-
-            if string not in ("progress", "    cd"):
-                y += 1
-                x = 4
 
     def clear(self):
         self.win.erase()
@@ -482,14 +495,16 @@ def init():
     x, y = 0, 0
     conn = sqlite3.connect(DB_PATH)
 
-    windows.append(Window(FRAME, height, width, x, y, conn, HEADER, title_pos=width // 2 - len(HEADER) // 2 - 1, color=WHITE, style=NORMAL))
+    windows.append(Window(FRAME, height - 3, width, y, x, conn, HEADER, title_pos=width // 2 - len(HEADER) // 2 - 1, color=WHITE, style=NORMAL))
 
     section_width = (width - 8) // 4
     x += 2
 
     for i in range(len(statuses)):
-        windows.append(Window(list(statuses.keys())[i], height - 2, section_width, 1, x, conn, statuses[i+1][1], color=statuses[i+1][0], style=BOLD))
+        windows.append(Window(list(statuses.keys())[i], height - 5, section_width, 1, x, conn, statuses[i+1][1], color=statuses[i+1][0], style=BOLD))
         x += 2 + section_width
+
+    windows.append(Window(HELP, 3, width, height - 3, 0, conn, "Help", title_pos=width // 2 - len(HEADER) // 2 - 1, color=WHITE, style=NORMAL))
 
     # Connect to database (or create it if it doesn't exist)
     cursor = conn.cursor()
@@ -528,7 +543,7 @@ def init():
             ("snr",         "/home/sean/.config/nvim/lua/snr/",                 "init.lua",         "Active"),
             ("macro-blues", "/home/sean/code/active/c/macro-blues/",            "macro-blues",      "Active"),
             ("leetcode",    "/home/sean/code/paused/leetcode/",                 "",                 "Active"),
-            ("TestTaker",   "/home/sean/code/paused/TestTaker/",                "tettaker.py",      "Active"),
+            ("TestTaker",   "/home/sean/code/paused/TestTaker/",                "testtaker.py",      "Active"),
             ("Sorter",      "/home/sean/code/done/Sorter/",                     "sorter.py",        "Done"),
             ("landing-page","/home/sean/code/done/landing-page/",               "landing-page.py",  "Done"),
         ]
@@ -608,24 +623,8 @@ def main(stdscr):
         # if key == 'a':
         #     add_card("another", "/some/path")
         #     continue
-        if key == 'c':
-            # os.system(TERMINAL_PREFIX + windows[active_window].get_card(active_card).path)
-            continue
-        if key == 'n':
-            # os.system(NEOVIM_PREFIX + active_card.path + active_card.file)
-            continue
         if key == 't':
             # open_todo(windows[active_window].get_card(active_row).project_name)
-            continue
-        if key == 'p':
-            # temp_card = windows[active_window].get_card(active_row)
-            # windows[active_window].delete_card(temp_card)
-            # windows[active_window + 1].add_card(temp_card.project_name, temp_card.path)
-            continue
-        if key == 'r':
-            # temp_card = windows[active_window].get_card(active_row)
-            # windows[active_window].delete_card(temp_card)
-            # windows[active_window - 1].add_card(temp_card.project_name, temp_card.path)
             continue
 
 if __name__ == "__main__":
