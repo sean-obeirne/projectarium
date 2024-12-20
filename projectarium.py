@@ -174,6 +174,7 @@ TERMINAL_PREFIX = "gnome-terminal --maximize --working-directory="
 NEOVIM_PREFIX = "nvim "
 actions = {}
 
+# DB_PATH = "/home/sean/bin/.projectarium.db"
 DB_PATH = ".projectarium.db"
 
 FRAME = 0
@@ -305,14 +306,15 @@ class Window:
     def pull(self):
         self.cursor.execute("SELECT * FROM projects WHERE status = ? ORDER BY LOWER(name);", (self.title,))
         rows = self.cursor.fetchall()
-        self.cursor.execute("SELECT COUNT(*) FROM todo WHERE project_id = ?;", (self.id,))
-        todo_count = str(self.cursor.fetchone())[1:-2]
 
         self.cards.clear()
         self.card_offset = 0
         for row in rows:
-            self.cards.append(Card(row[0], 3, self.w, self.y + self.card_offset, self.x + 2, row[1], row[3], row[4], row[2], row[6], todo_count=int(todo_count)))
+            self.cursor.execute("SELECT COUNT(*) FROM todo WHERE project_id = ?;", (row[0],))
+            todo_count = self.cursor.fetchone()[0]
+            self.cards.append(Card(row[0], 3, self.w, self.y + self.card_offset, self.x + 2, row[1], row[3], row[4], row[2], row[6], todo_count=todo_count))
             self.card_offset += 3
+
 
     def contains(self, name):
         # for card in self.cards:
