@@ -382,6 +382,37 @@ class Window:
                 self.draw()
                 self.refresh()
 
+    def add_project(self):
+        answers = self.draw_help(getting_input=True)
+        if answers is not None:
+            self.cursor.execute('''
+                INSERT INTO projects (name, description, path, file, status, language)
+                VALUES (?, ?, ?, ?, 'Backlog', ?)
+            ''', (answers[0], answers[1], answers[2], answers[3], answers[4],))
+            self.conn.commit()
+            windows[BACKLOG].pull()
+            windows[BACKLOG].draw_cards()
+            windows[BACKLOG].refresh()
+
+    def delete_project(self):
+        to_delete = windows[active_window].cards[active_card]
+        self.cursor.execute("DELETE FROM projects WHERE name = ?", (to_delete.name,))
+        self.conn.commit()
+        windows[active_window].pull()
+        windows[active_window].draw()
+        windows[active_window].refresh()
+
+    def edit_project(self):
+        to_edit = windows[active_window].cards[active_card]
+        answers = self.draw_help(getting_input=True, editting=True)
+        if answers is not None:
+            windows[BACKLOG].pull()
+            windows[BACKLOG].draw_cards()
+            windows[BACKLOG].refresh()
+
+
+# id, name, description, path, file, status, language
+
     def draw_help(self, getting_input=False, editting=False):
         self.win.erase()
         self.win.attron(WHITE)
@@ -401,10 +432,73 @@ class Window:
                 input = self.win.getstr(1, 9).decode("utf-8")
                 curses.noecho()
                 self.draw_help(False)
-                return input
+                return [input]
             else:
                 strings = ["add", "delete", "edit", "quit"]
         else:
+            if getting_input:
+                questions = ["name*", "description", "path*", "file", "language"]
+                if editting:
+                    pass
+                #     edit_card = windows[active_window].cards[active_card]
+                #     existing_answers = [edit_card.name, edit_card.description, edit_card.path, edit_card.file, edit_card.language]
+                #     self.cursor.execute("SELECT * FROM projects WHERE name = ?", (edit_card.name,))
+                #     fetched = self.cursor.fetchone()[1:]
+                #     ret = []
+                #     curses.echo()
+                #
+                #
+                #     for i in range(len(questions)):
+                #         self.win.erase()
+                #
+                #         self.win.attron(BRIGHT_YELLOW | BOLD)
+                #         self.win.box()
+                #         x = 4
+                #         prompt = f"current {questions[i]}: "
+                #         self.win.addstr(1, x, prompt)
+                #         x += len(prompt)
+                #         self.win.attroff(BRIGHT_YELLOW | BOLD)
+                #
+                #         self.win.attron(WHITE)
+                #         prompt = f"{existing_answers[i]}"
+                #         self.win.addstr(1, x, prompt)
+                #         x += len(prompt)
+                #         self.win.attroff(WHITE)
+                #
+                #         self.win.attron(BRIGHT_YELLOW | BOLD)
+                #         prompt = f", new {questions[i]} (_ for no change): "
+                #         self.win.addstr(1, x, prompt)
+                #         x += len(prompt)
+                #         self.win.attroff(BRIGHT_YELLOW | BOLD)
+                #
+                #         self.win.attron(WHITE)
+                #         input = self.win.getstr(1, x).decode("utf-8")
+                #         self.win.attroff(WHITE)
+                #         if input != "_" and input != existing_answers[i]:
+                #             self.cursor.execute(f"UPDATE projects SET {questions[i].strip('*')} = ? WHERE name = ?", (input, existing_answers[0],))
+                #             self.conn.commit()
+                #             
+                #
+                #     curses.noecho()
+                #     self.draw_help()
+                #     self.refresh()
+                #     return ret
+                else:
+                    ret = []
+                    for question in questions:
+                        self.win.attron(BRIGHT_YELLOW | BOLD)
+                        self.win.addstr(1, 4, question + ": ")
+                        self.win.box()
+                        self.win.attroff(BRIGHT_YELLOW | BOLD)
+                        curses.echo()
+                        input = self.win.getstr(1, 4 + len(question) + 2).decode("utf-8")
+                        curses.noecho()
+                        ret.append(input)
+                        self.win.erase()
+                    self.draw_help()
+                    self.refresh()
+                    return ret
+
             strings = ["cd", "nvim", "todo", "progress", "regress", "quit"]
 
         y = 1
@@ -468,7 +562,7 @@ class Window:
                 else:
                     card.win.attron(RED)
                 card.win.attron(BOLD)
-                card.win.addstr(4, card.width - 4 - len(str(card.todo_count)) - 2, f"{card.todo_count}") if card.language not in (None, "") else ""
+                card.win.addstr(4, card.width - 4 - len(str(card.todo_count)) - 2, f"{card.todo_count}")
                 card.win.attroff(GREEN | YELLOW | RED | BOLD)
 
             card.refresh()
@@ -612,20 +706,21 @@ class Card():
         draw_windows()
 
     def add_item(self):
-        new_item = windows[HELP].draw_help(getting_input=True)
-        log.info(new_item)
+        new_item = windows[HELP].draw_help(getting_input=True)[0]
         if self.todo_window:
             self.cursor.execute("INSERT INTO todo (description, priority, deleted, project_id) VALUES (?, ?, ?, ?)", (new_item, 0, False, self.id))
             self.conn.commit()
             self.todo_count += 1
             draw_windows() # TODO: basically eliminate this
             self.refresh()
+            self.close_todo()
             self.open_todo()
 
     def down(self):
         if self.todo_window and self.selected_item < self.todo_count - 1:
             self.selected_item += 1
             self.refresh()
+            self.close_todo()
             self.open_todo()
             
 
@@ -633,6 +728,7 @@ class Card():
         if self.todo_window and self.selected_item > 0:
             self.selected_item -= 1
             self.refresh()
+            self.close_todo()
             self.open_todo()
 
     def delete_item(self):
@@ -650,10 +746,11 @@ class Card():
     def edit_item(self, ):
         if self.todo_count <= 0:
             return
-        item_text = windows[HELP].draw_help(getting_input=True, editting=True)
+        item_text = windows[HELP].draw_help(getting_input=True, editting=True)[0]
         self.cursor.execute("UPDATE todo SET description = ? WHERE description = ?", (item_text, self.items[self.selected_item][1],))
         self.conn.commit()
         self.refresh()
+        self.close_todo()
         self.open_todo()
 
 
@@ -708,18 +805,19 @@ def init():
     cursor.execute("SELECT COUNT(*) FROM projects")
     if cursor.fetchone()[0] == 0:
         default_projects = [
-            ("WotR",        "Wizards of the Rift",          "/home/sean/code/paused/godot/Wizards-of-the-Rift/","",                 "Abandoned",  "Godot"),
-            ("LearnScape",  "General learning visualizer",  "/home/sean/code/paused/LearnScape/",               "learnscape.py",    "Abandoned",  "Python"),
-            ("ROMs",        "ROM emulation optimization",   "/home/sean/code/future/ROMs/",                     "",                 "Backlog",  "C"),
-            ("goverse",     "Go VCS application",           "/home/sean/code/active/go/goverse/",               "cli/main.go",      "Active",   "Go"),
-            ("projectarium","Project progress tracker",     "/home/sean/code/active/python/projectarium/",      "projectarium.py",  "Active",   "Python"),
-            ("snr",         "Search and replace plugin",    "/home/sean/.config/nvim/lua/snr/",                 "init.lua",         "Active",   "Lua"),
-            ("todua",       "Todo list for Neovim",         "/home/sean/.config/nvim/lua/todua/",               "init.lua",         "Active",   "Lua"),
-            ("macro-blues", "Custom macropad firmware",     "/home/sean/code/active/c/macro-blues/",            "macro-blues",      "Active",   "C"),
-            ("leetcode",    "Coding interview practice",    "/home/sean/code/paused/leetcode/",                 "",                 "Active",   "Python"),
-            ("TestTaker",   "ChatGPT->Python test maker",   "/home/sean/code/paused/TestTaker/",                "testtaker.py",      "Active",  "Python"),
-            ("Sorter",      "Sorting algoithm visualizer",  "/home/sean/code/done/Sorter/",                     "sorter.py",        "Done",     "Python"),
-            ("landing-page","Cute application launcher",    "/home/sean/code/done/landing-page/",               "landing-page.py",  "Done",     "Python"),
+            ("WotR",            "Wizards of the Rift",          "/home/sean/code/paused/godot/Wizards-of-the-Rift/","",                 "Abandoned",  "Godot"),
+            ("LearnScape",      "General learning visualizer",  "/home/sean/code/paused/LearnScape/",               "learnscape.py",    "Abandoned",  "Python"),
+            ("ROMs",            "ROM emulation optimization",   "/home/sean/code/future/ROMs/",                     "",                 "Backlog",      "C"),
+            ("goverse",         "Go VCS application",           "/home/sean/code/active/go/goverse/",               "cli/main.go",      "Active",       "Go"),
+            ("projectarium",    "Project progress tracker",     "/home/sean/code/active/python/projectarium/",      "projectarium.py",  "Active",       "Python"),
+            ("snr",             "Search and replace plugin",    "/home/sean/.config/nvim/lua/snr/",                 "init.lua",         "Active",       "Lua"),
+            ("todua",           "Todo list for Neovim",         "/home/sean/.config/nvim/lua/todua/",               "init.lua",         "Active",       "Lua"),
+            ("macro-blues",     "Custom macropad firmware",     "/home/sean/code/active/c/macro-blues/",            "macro-blues",      "Active",       "C"),
+            ("leetcode",        "Coding interview practice",    "/home/sean/code/paused/leetcode/",                 "",                 "Active",       "Python"),
+            ("TestTaker",       "ChatGPT->Python test maker",   "/home/sean/code/paused/TestTaker/",                "testtaker.py",     "Active",       "Python"),
+            ("Mission-Uplink",  "TFG Mission Uplink",           "/home/sean/code/tfg/Mission-Uplink/",              "README.md",        "Active",       "Go,C"),
+            ("Sorter",          "Sorting algoithm visualizer",  "/home/sean/code/done/Sorter/",                     "sorter.py",        "Done",         "Python"),
+            ("landing-page",    "Cute application launcher",    "/home/sean/code/done/landing-page/",               "landing-page.py",  "Done",         "Python"),
             ################"   valid description length  "################################################################################################
         ]
         cursor.executemany('''
@@ -791,7 +889,9 @@ keymap = {
 
     " ": lambda: draw(),
 
-    "a": lambda:  windows[active_window].add_project(),
+    "a": lambda:  windows[HELP].add_project(),
+    "d": lambda:  windows[HELP].delete_project(),
+    # "e": lambda:  windows[HELP].edit_project(),
 
     "c": lambda: os.system(TERMINAL_PREFIX + windows[active_window].cards[active_card].path),
     "n": lambda: os.system(TERMINAL_PREFIX + windows[active_window].cards[active_card].path + " -- bash -c \'" +  NEOVIM_PREFIX + windows[active_window].cards[active_card].file + "\'") if windows[active_window].cards[active_card].file != "" else "",
