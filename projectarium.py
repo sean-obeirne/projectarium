@@ -39,6 +39,8 @@ green = hex_to_rgb("29ad2b")
 brown = hex_to_rgb("896018")
 white = hex_to_rgb("ffffff")
 bright_yellow = hex_to_rgb("ffd75e")
+bright_blue = hex_to_rgb("3169f1")
+
 
 tn_bg = hex_to_rgb("24283b")
 tn_bg_dark = hex_to_rgb("1f2335")
@@ -98,7 +100,7 @@ color_definitions = {
     COLOR_RED: tn_red1,
     COLOR_GREEN: green,
     COLOR_ORANGE: tn_orange,
-    COLOR_BLUE: tn_blue0,
+    COLOR_BLUE: bright_blue,
     COLOR_GUTTER: tn_fg_gutter,
     COLOR_CYAN: tn_cyan,
     COLOR_WHITE: white,
@@ -147,7 +149,7 @@ RED = curses.color_pair(2)
 GREEN = curses.color_pair(3)
 ORANGE = curses.color_pair(4)
 BLUE = curses.color_pair(5)
-MAGENTA = curses.color_pair(6)
+GUTTER = curses.color_pair(6)
 CYAN = curses.color_pair(7)
 WHITE = curses.color_pair(8)
 DARK_GREY = curses.color_pair(9)
@@ -174,8 +176,8 @@ TERMINAL_PREFIX = "gnome-terminal --maximize --working-directory="
 NEOVIM_PREFIX = "nvim "
 actions = {}
 
-# DB_PATH = "/home/sean/bin/.projectarium.db"
-DB_PATH = ".projectarium.db"
+DB_PATH = "/home/sean/bin/.projectarium.db"
+# DB_PATH = ".projectarium.db"
 
 FRAME = 0
 ABANDONED = 1
@@ -187,9 +189,20 @@ HELP = 5
 statuses = {
     ABANDONED: (RED, "Abandoned"),
     BACKLOG: (BLUE, "Backlog"),
-    ACTIVE: (YELLOW, "Active"),
+    ACTIVE: (BRIGHT_YELLOW, "Active"),
     DONE: (GREEN, "Done"),
 }
+modes = ["normal", "colored"]
+current_mode = modes[0]
+def shift_mode():
+    global current_mode
+    if current_mode == "normal":
+        current_mode = "colored"
+        draw_windows()
+    else:
+        current_mode = "normal"
+        draw_windows()
+
 windows = []
 def draw_windows():
     for window in windows:
@@ -493,7 +506,7 @@ class Window:
                     self.refresh()
                     return ret
 
-            strings = ["cd", "nvim", "todo", "progress", "regress", "quit"]
+            strings = ["cd", "nvim", "todo", "progress", "regress", "mode", "quit"]
 
         y = 1
         x = 4
@@ -532,10 +545,23 @@ class Window:
                     card.is_shoved = True
             card.win.resize(card.height, card.width - 4)
 
-            card.win.attron(DIM_WHITE | BOLD) if card.active else card.win.attron(DARK_GREY | BOLD)
-            card.win.box()
-            card.draw_name_border()
-            card.win.attroff(DIM_WHITE | BOLD)
+            if current_mode == "normal":
+                card.win.attron(DIM_WHITE | BOLD) if card.active else card.win.attron(DARK_GREY | BOLD)
+                card.win.box()
+                card.draw_name_border()
+                card.win.attroff(DIM_WHITE | BOLD)
+            elif current_mode == "colored":
+                if card.todo_count == 0:
+                    card.win.attron(GUTTER)
+                elif card.todo_count <= 2:
+                    card.win.attron(LIGHT_GREEN)
+                elif card.todo_count <= 5:
+                    card.win.attron(YELLOW)
+                else:
+                    card.win.attron(LIGHT_RED)
+                card.win.box()
+                card.draw_name_border()
+                card.win.attroff(GUTTER | GREEN | BRIGHT_YELLOW | RED)
 
             card.win.attron(card.color | BOLD)
             card.win.addstr(1, 2, card.name)
@@ -557,7 +583,7 @@ class Window:
                     card.win.attron(RED)
                 card.win.attron(BOLD)
                 card.win.addstr(4, card.width - 4 - len(str(card.todo_count)) - 2, f"{card.todo_count}")
-                card.win.attroff(GREEN | YELLOW | RED | BOLD)
+                card.win.attroff(GREEN | BRIGHT_YELLOW | RED | BOLD)
 
             card.refresh()
 
@@ -819,17 +845,17 @@ def init():
             VALUES (?, ?, ?, ?, ?, ?)
         ''', default_projects)
     # Optional: Insert some default data only if the database is empty
-    # cursor.execute("SELECT COUNT(*) FROM todo")
-    # if cursor.fetchone()[0] == 0:
-    #     default_todo = [
-    #         ("i have a thing to do", 0, False, 1),
-    #         ("here is another thing!", 0, False, 1),
-    #         ("another thing, i have to do", 0, False, 1),
-    #     ]
-    #     cursor.executemany('''
-    #         INSERT INTO todo (description, priority, deleted, project_id)
-    #         VALUES (?, ?, ?, ?)
-    #     ''', default_todo)
+    cursor.execute("SELECT COUNT(*) FROM todo")
+    if cursor.fetchone()[0] == 0:
+        default_todo = [
+            ("i have a thing to do", 0, False, 1),
+            ("here is another thing!", 0, False, 1),
+            ("another thing, i have to do", 0, False, 1),
+        ]
+        cursor.executemany('''
+            INSERT INTO todo (description, priority, deleted, project_id)
+            VALUES (?, ?, ?, ?)
+        ''', default_todo)
 
     # Commit changes and close connection
     conn.commit()
@@ -897,6 +923,8 @@ keymap = {
     "KEY_RIGHT": lambda: increment_active_window(),
     "KEY_UP": lambda: decrement_active_card(),
     "KEY_DOWN": lambda: increment_active_card(),
+
+    "m": lambda: shift_mode(),
 
     # "": lambda: ,
 }
