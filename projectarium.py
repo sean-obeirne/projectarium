@@ -207,6 +207,7 @@ windows = []
 def draw_windows():
     for window in windows:
         window.draw()
+        window.refresh()
 
 in_todo = False
 
@@ -410,12 +411,10 @@ class Window:
         windows[active_window].refresh()
 
     def edit_project(self):
-        to_edit = windows[active_window].cards[active_card]
-        answers = self.draw_help(getting_input=True, editting=True)
-        if answers is not None:
-            windows[BACKLOG].pull()
-            windows[BACKLOG].draw_cards()
-            windows[BACKLOG].refresh()
+        self.draw_help(getting_input=True, editting=True)
+        windows[active_window].pull()
+        windows[active_window].draw()
+        windows[active_window].refresh()
 
 
 # id, name, description, path, file, status, language
@@ -446,50 +445,81 @@ class Window:
             if getting_input:
                 questions = ["name*", "description", "path*", "file", "language"]
                 if editting:
-                    pass
-                #     edit_card = windows[active_window].cards[active_card]
-                #     existing_answers = [edit_card.name, edit_card.description, edit_card.path, edit_card.file, edit_card.language]
-                #     self.cursor.execute("SELECT * FROM projects WHERE name = ?", (edit_card.name,))
-                #     fetched = self.cursor.fetchone()[1:]
-                #     ret = []
-                #     curses.echo()
-                #
-                #
-                #     for i in range(len(questions)):
-                #         self.win.erase()
-                #
-                #         self.win.attron(BRIGHT_YELLOW | BOLD)
-                #         self.win.box()
-                #         x = 4
-                #         prompt = f"current {questions[i]}: "
-                #         self.win.addstr(1, x, prompt)
-                #         x += len(prompt)
-                #         self.win.attroff(BRIGHT_YELLOW | BOLD)
-                #
-                #         self.win.attron(WHITE)
-                #         prompt = f"{existing_answers[i]}"
-                #         self.win.addstr(1, x, prompt)
-                #         x += len(prompt)
-                #         self.win.attroff(WHITE)
-                #
-                #         self.win.attron(BRIGHT_YELLOW | BOLD)
-                #         prompt = f", new {questions[i]} (_ for no change): "
-                #         self.win.addstr(1, x, prompt)
-                #         x += len(prompt)
-                #         self.win.attroff(BRIGHT_YELLOW | BOLD)
-                #
-                #         self.win.attron(WHITE)
-                #         input = self.win.getstr(1, x).decode("utf-8")
-                #         self.win.attroff(WHITE)
-                #         if input != "_" and input != existing_answers[i]:
-                #             self.cursor.execute(f"UPDATE projects SET {questions[i].strip('*')} = ? WHERE name = ?", (input, existing_answers[0],))
-                #             self.conn.commit()
-                #             
-                #
-                #     curses.noecho()
-                #     self.draw_help()
-                #     self.refresh()
-                #     return ret
+
+                    self.win.attron(BRIGHT_YELLOW | BOLD)
+                    self.win.box()
+                    x = 4
+                    prompt = "Column to edit: "
+                    self.win.addstr(1, x, prompt)
+                    x += len(prompt)
+                    self.win.attroff(BRIGHT_YELLOW | BOLD)
+                    for i, question in enumerate(questions):
+
+                        self.win.attron(ORANGE | BOLD)
+                        prompt = f"{i+1}. "
+                        self.win.addstr(1, x, prompt)
+                        x += len(prompt)
+                        self.win.attroff(ORANGE | BOLD)
+
+                        self.win.attron(WHITE)
+                        prompt = f"{question} "
+                        self.win.addstr(1, x, prompt)
+                        x += len(prompt)
+                        self.win.attroff(WHITE)
+
+                    self.win.attron(WHITE)
+                    prompt = f" :  "
+                    self.win.addstr(1, x, prompt)
+                    x += len(prompt)
+                    self.win.attroff(WHITE)
+
+                    curses.echo()
+
+                    self.win.attron(WHITE)
+                    input = chr(self.win.getch(1, x))
+                    self.win.attroff(WHITE)
+
+                    selection = 0
+                    if input in ('1', '2', '3', '4', '5'):
+                        selection = int(input) - 1
+                    log.info(selection)
+
+                    edit_card = windows[active_window].cards[active_card]
+                    existing_answers = [edit_card.name, edit_card.description, edit_card.path, edit_card.file, edit_card.language]
+                    self.win.erase()
+
+                    x = 4
+                    self.win.attron(BRIGHT_YELLOW | BOLD)
+                    self.win.box()
+                    prompt = f"Current value: "
+                    self.win.addstr(1, x, prompt)
+                    x += len(prompt)
+                    self.win.attroff(BRIGHT_YELLOW | BOLD)
+
+                    self.win.attron(WHITE)
+                    prompt = f"{existing_answers[selection]}  "
+                    self.win.addstr(1, x, prompt)
+                    x += len(prompt)
+                    self.win.attroff(WHITE)
+
+                    self.win.attron(BRIGHT_YELLOW | BOLD)
+                    prompt = f"New value: "
+                    self.win.addstr(1, x, prompt)
+                    x += len(prompt)
+                    self.win.attroff(BRIGHT_YELLOW | BOLD)
+
+                    self.win.attron(WHITE)
+                    input = self.win.getstr(1, x).decode("utf-8")
+                    self.win.attroff(WHITE)
+
+                    self.cursor.execute(f"UPDATE projects SET {questions[selection].strip("*")} = ? WHERE name = ?", (input, edit_card.name,))
+                    self.conn.commit()
+
+                    curses.noecho()
+                    self.draw_help()
+                    self.refresh()
+                    return
+                    # return ret
                 else:
                     ret = []
                     for question in questions:
@@ -506,7 +536,7 @@ class Window:
                     self.refresh()
                     return ret
 
-            strings = ["cd", "nvim", "todo", "progress", "regress", "mode", "quit"]
+            strings = ["add", "delete", "edit", "cd", "nvim", "todo", "progress", "regress", "mode", "quit"]
 
         y = 1
         x = 4
@@ -777,6 +807,14 @@ class Card():
 
 def init():
     global active_card, active_window
+    stdscr.clear()
+
+    curses.curs_set(0)
+    curses.noecho()
+    curses.set_escdelay(1)
+
+    stdscr.refresh()
+
     stdscr.keypad(True)
 
     height, width = stdscr.getmaxyx()
@@ -864,33 +902,14 @@ def init():
     win_set = False
     for window in windows:
         window.pull()
-        if len(window.cards) > 0 and not win_set:
+        if len(window.cards) > 0 and active_card == -1:
             win_set = True
             active_card = 0
             active_window = window.id
             window.cards[active_card].activate()
-        
-
-
-
-def draw():
-    global active_card, active_window
-    # Clear screen
-    stdscr.clear()
-
-    # Turn off cursor blinking and echoing
-    curses.curs_set(0)
-    curses.noecho()
-    curses.set_escdelay(1)
-
-    stdscr.refresh()
-
-    for window in windows:
-        if active_card == -1 and len(window.cards) > 0 and active_window == 0:
-            active_card = 0
-            active_window = window.id,
         window.draw()
         window.refresh()
+        
 
 todo_keymap = {
     "q": lambda: windows[active_window].cards[active_card].close_todo(),
@@ -907,11 +926,9 @@ keymap = {
     "q": lambda: exit(0),
     "\x1b": lambda: exit(0),
 
-    " ": lambda: draw(),
-
     "a": lambda:  windows[HELP].add_project(),
     "d": lambda:  windows[HELP].delete_project(),
-    # "e": lambda:  windows[HELP].edit_project(),
+    "e": lambda:  windows[HELP].edit_project(),
 
     "c": lambda: os.system(TERMINAL_PREFIX + windows[active_window].cards[active_card].path),
     "n": lambda: os.system(TERMINAL_PREFIX + windows[active_window].cards[active_card].path + " -- bash -c \'" +  NEOVIM_PREFIX + windows[active_window].cards[active_card].file + "\'") if windows[active_window].cards[active_card].file != "" else "",
@@ -930,9 +947,7 @@ keymap = {
 }
 
 def main(stdscr):
-    global active_card
     init()
-    draw()
 
     # Main loop
     while True:
@@ -945,9 +960,6 @@ def main(stdscr):
             if key not in keymap: continue
             keymap[key]()
 
-        # if key == 'a':
-        #     add_card("another", "/some/path")
-        #     continue
 
 if __name__ == "__main__":
     curses.wrapper(main)
