@@ -2,28 +2,20 @@
 
 #
 # Author: Sean O'Beirne
-# Date: 7-29-2024
-# File: landing-page.py
-# Usage: python3 landing-page
+# Date: 12-18-2024
+# File: projectarium
+# Usage: projectarium
 #
 
 #
-# Boilerplate for curses application
+# Kanban board with Python curses
 #
 
 
 import curses
-from curses.textpad import rectangle
-
-import random
-
-import subprocess, os, sys
-
-import time
-
-import logging
-
 import sqlite3
+import logging
+import os
 
 # Configure logging
 logging.basicConfig(filename='debug.log', level=logging.DEBUG, filemode='w',
@@ -182,7 +174,7 @@ TERMINAL_PREFIX = "gnome-terminal --maximize --working-directory="
 NEOVIM_PREFIX = "nvim "
 actions = {}
 
-DB_PATH = "projectarium.db"
+DB_PATH = ".projectarium.db"
 
 FRAME = 0
 ABANDONED = 1
