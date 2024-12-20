@@ -185,15 +185,15 @@ actions = {}
 DB_PATH = "projectarium.db"
 
 FRAME = 0
-BACKLOG = 1
-BLOCKED = 2
+ABANDONED = 1
+BACKLOG = 2
 ACTIVE = 3
 DONE = 4
 HELP = 5
 
 statuses = {
+    ABANDONED: (RED, "Abandoned"),
     BACKLOG: (BLUE, "Backlog"),
-    BLOCKED: (RED, "Blocked"),
     ACTIVE: (YELLOW, "Active"),
     DONE: (GREEN, "Done"),
 }
@@ -382,7 +382,7 @@ class Window:
                 self.draw()
                 self.refresh()
 
-    def draw_help(self, getting_input=False):
+    def draw_help(self, getting_input=False, editting=False):
         self.win.erase()
         self.win.attron(WHITE)
         self.win.box()
@@ -390,7 +390,10 @@ class Window:
         if in_todo:
             if getting_input:
                 self.win.attron(BRIGHT_YELLOW | BOLD)
-                self.win.addstr(1, 4, "add: ")
+                if editting:
+                    self.win.addstr(1, 3, "edit: ")
+                else:
+                    self.win.addstr(1, 4, "add: ")
                 self.win.box()
                 self.win.attroff(BRIGHT_YELLOW | BOLD)
                 # self.win.addstr
@@ -614,18 +617,10 @@ class Card():
         if self.todo_window:
             self.cursor.execute("INSERT INTO todo (description, priority, deleted, project_id) VALUES (?, ?, ?, ?)", (new_item, 0, False, self.id))
             self.conn.commit()
-            # self.items.append((0, new_item[0]))
-            # self.todo_window.refresh()
-            # self.cursor.execute("SELECT COUNT(*) FROM todo")
-            # self.todo_window.add(stuff)
-            # log.info(stuff)
             self.todo_count += 1
             draw_windows() # TODO: basically eliminate this
             self.refresh()
             self.open_todo()
-
-    def select_item(self):
-        pass
 
     def down(self):
         if self.todo_window and self.selected_item < self.todo_count - 1:
@@ -653,7 +648,13 @@ class Card():
         pass
 
     def edit_item(self, ):
-        pass
+        if self.todo_count <= 0:
+            return
+        item_text = windows[HELP].draw_help(getting_input=True, editting=True)
+        self.cursor.execute("UPDATE todo SET description = ? WHERE description = ?", (item_text, self.items[self.selected_item][1],))
+        self.conn.commit()
+        self.refresh()
+        self.open_todo()
 
 
 
@@ -707,9 +708,9 @@ def init():
     cursor.execute("SELECT COUNT(*) FROM projects")
     if cursor.fetchone()[0] == 0:
         default_projects = [
+            ("WotR",        "Wizards of the Rift",          "/home/sean/code/paused/godot/Wizards-of-the-Rift/","",                 "Abandoned",  "Godot"),
+            ("LearnScape",  "General learning visualizer",  "/home/sean/code/paused/LearnScape/",               "learnscape.py",    "Abandoned",  "Python"),
             ("ROMs",        "ROM emulation optimization",   "/home/sean/code/future/ROMs/",                     "",                 "Backlog",  "C"),
-            ("WotR",        "Wizards of the Rift",          "/home/sean/code/paused/godot/Wizards-of-the-Rift/","",                 "Blocked",  "Godot"),
-            ("LearnScape",  "General learning visualizer",  "/home/sean/code/paused/LearnScape/",               "learnscape.py",    "Blocked",  "Python"),
             ("goverse",     "Go VCS application",           "/home/sean/code/active/go/goverse/",               "cli/main.go",      "Active",   "Go"),
             ("projectarium","Project progress tracker",     "/home/sean/code/active/python/projectarium/",      "projectarium.py",  "Active",   "Python"),
             ("snr",         "Search and replace plugin",    "/home/sean/.config/nvim/lua/snr/",                 "init.lua",         "Active",   "Lua"),
@@ -726,28 +727,17 @@ def init():
             VALUES (?, ?, ?, ?, ?, ?)
         ''', default_projects)
     # Optional: Insert some default data only if the database is empty
-    cursor.execute("SELECT COUNT(*) FROM todo")
-    if cursor.fetchone()[0] == 0:
-        default_todo = [
-            ("i have a thing to do", 0, False, 1),
-            ("here is another thing!", 0, False, 1),
-            ("anoher thing, i have to do", 0, False, 1),
-            # ("ROMs",        "ROM emulation optimization",   "/home/sean/code/future/ROMs/",                     "",                 "Backlog",  "C"),
-            # ("WotR",        "Wizards of the Rift",          "/home/sean/code/paused/godot/Wizards-of-the-Rift/","",                 "Blocked",  "Godot"),
-            # ("LearnScape",  "General learning visualizer",  "/home/sean/code/paused/LearnScape/",               "learnscape.py",    "Blocked",  "Python"),
-            # ("goverse",     "Go VCS application",           "/home/sean/code/active/go/goverse/",               "cli/main.go",      "Active",   "Go"),
-            # ("projectarium","Project progress tracker",     "/home/sean/code/active/python/projectarium/",      "projectarium.py",  "Active",   "Python"),
-            # ("snr",         "Search and replace plugin",    "/home/sean/.config/nvim/lua/snr/",                 "init.lua",         "Active",   "Lua"),
-            # ("macro-blues", "Custom macropad firmware",     "/home/sean/code/active/c/macro-blues/",            "macro-blues",      "Active",   "C"),
-            # ("leetcode",    "Coding interview practice",    "/home/sean/code/paused/leetcode/",                 "",                 "Active",   "Python"),
-            # ("TestTaker",   "ChatGPT->Python test maker",   "/home/sean/code/paused/TestTaker/",                "testtaker.py",      "Active",  "Python"),
-            # ("Sorter",      "Sorting algoithm visualizer",  "/home/sean/code/done/Sorter/",                     "sorter.py",        "Done",     "Python"),
-            # ("landing-page","Cute application launcher",    "/home/sean/code/done/landing-page/",               "landing-page.py",  "Done",     "Python"),
-        ]
-        cursor.executemany('''
-            INSERT INTO todo (description, priority, deleted, project_id)
-            VALUES (?, ?, ?, ?)
-        ''', default_todo)
+    # cursor.execute("SELECT COUNT(*) FROM todo")
+    # if cursor.fetchone()[0] == 0:
+    #     default_todo = [
+    #         ("i have a thing to do", 0, False, 1),
+    #         ("here is another thing!", 0, False, 1),
+    #         ("another thing, i have to do", 0, False, 1),
+    #     ]
+    #     cursor.executemany('''
+    #         INSERT INTO todo (description, priority, deleted, project_id)
+    #         VALUES (?, ?, ?, ?)
+    #     ''', default_todo)
 
     # Commit changes and close connection
     conn.commit()
@@ -786,11 +776,13 @@ def draw():
 
 todo_keymap = {
     "q": lambda: windows[active_window].cards[active_card].close_todo(),
+
     "a": lambda: windows[active_window].cards[active_card].add_item(),
-    "d": lambda: windows[active_window].cards[active_card].delete_item(),
-    "e": lambda: windows[active_window].cards[active_card].edit_item(),
+
     "KEY_UP": lambda: windows[active_window].cards[active_card].up(),
     "KEY_DOWN": lambda: windows[active_window].cards[active_card].down(),
+    "d": lambda: windows[active_window].cards[active_card].delete_item(),
+    "e": lambda: windows[active_window].cards[active_card].edit_item(),
 }
 
 keymap = {
@@ -798,6 +790,8 @@ keymap = {
     "\x1b": lambda: exit(0),
 
     " ": lambda: draw(),
+
+    "a": lambda:  windows[active_window].add_project(),
 
     "c": lambda: os.system(TERMINAL_PREFIX + windows[active_window].cards[active_card].path),
     "n": lambda: os.system(TERMINAL_PREFIX + windows[active_window].cards[active_card].path + " -- bash -c \'" +  NEOVIM_PREFIX + windows[active_window].cards[active_card].file + "\'") if windows[active_window].cards[active_card].file != "" else "",
