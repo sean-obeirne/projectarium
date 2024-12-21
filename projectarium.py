@@ -16,56 +16,54 @@ import curses
 import sqlite3
 import logging
 import os
-import ccolors as c
+import ccolors as c # custom color module
+
 
 # Configure logging
-logging.basicConfig(filename='debug.log', level=logging.DEBUG, filemode='w',
-                    format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(filename='debug.log', level=logging.DEBUG, filemode='w', format='%(asctime)s - %(levelname)s - %(message)s')
 log = logging.getLogger(__name__)
 
+
+# Configure curses
 stdscr = curses.initscr()
-
-
 curses.start_color()
 curses.use_default_colors()
 c.init_16_colors()
 
-    
+
+#Configure windows
 HEADER = "Projectarium"
-
-FOOTER = [
-r"""*help placeholder*"""
-        ]
-
-TERMINAL_PREFIX = "gnome-terminal --maximize --working-directory="
-NEOVIM_PREFIX = "nvim "
-actions = {}
-
-DB_PATH = "/home/sean/bin/.projectarium.db"
-# DB_PATH = ".projectarium.db"
-
 FRAME = 0
 ABANDONED = 1
 BACKLOG = 2
 ACTIVE = 3
 DONE = 4
 HELP = 5
-
 statuses = {
     ABANDONED: (c.RED, "Abandoned"),
     BACKLOG: (c.BLUE, "Backlog"),
     ACTIVE: (c.BRIGHT_YELLOW, "Active"),
     DONE: (c.GREEN, "Done"),
 }
-modes = ["c.NORMAL", "coloc.RED"]
+
+
+# Assign other variables
+# DB_PATH = "/home/sean/bin/.projectarium.db"
+DB_PATH = ".projectarium.db"
+TERMINAL_PREFIX = "gnome-terminal --maximize --working-directory="
+NEOVIM_PREFIX = "nvim "
+
+
+
+modes = ["normal", "colored"]
 current_mode = modes[0]
 def shift_mode():
     global current_mode
-    if current_mode == "c.NORMAL":
-        current_mode = "coloc.RED"
+    if current_mode == "normal":
+        current_mode = "colored"
         draw_windows()
     else:
-        current_mode = "c.NORMAL"
+        current_mode = "normal"
         draw_windows()
 
 windows = []
@@ -440,12 +438,12 @@ class Window:
                     card.is_shoved = True
             card.win.resize(card.height, card.width - 4)
 
-            if current_mode == "c.NORMAL":
+            if current_mode == "normal":
                 card.win.attron(c.DIM_WHITE | c.BOLD) if card.active else card.win.attron(c.DARK_GREY | c.BOLD)
                 card.win.box()
                 card.draw_name_border()
                 card.win.attroff(c.DIM_WHITE | c.BOLD)
-            elif current_mode == "coloc.RED":
+            elif current_mode == "colored":
                 if card.todo_count == 0:
                     card.win.attron(c.GUTTER)
                 elif card.todo_count <= 2:
@@ -594,14 +592,14 @@ class Card():
         item_y = 3
         for i, item in enumerate(self.items):
             if i == self.selected_item:
-                self.todo_window.attron(INVERT)
+                self.todo_window.attron(c.INVERT)
             else:
                 self.todo_window.attron(c.WHITE)
 
             self.todo_window.addstr(item_y, 4, "• " + item[1])
             item_y += 1
             if i == self.selected_item:
-                self.todo_window.attroff(INVERT)
+                self.todo_window.attroff(c.INVERT)
             else:
                 self.todo_window.attroff(c.WHITE)
         self.todo_window.attroff(c.WHITE | c.BOLD)
