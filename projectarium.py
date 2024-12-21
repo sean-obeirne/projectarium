@@ -16,7 +16,11 @@ import curses
 import sqlite3
 import logging
 import os
+from enum import Enum, auto
+import sys
+
 import ccolors as c # custom color module
+
 
 
 # Configure logging
@@ -39,32 +43,141 @@ BACKLOG = 2
 ACTIVE = 3
 DONE = 4
 HELP = 5
-statuses = {
-    ABANDONED: (c.RED, "Abandoned"),
-    BACKLOG: (c.BLUE, "Backlog"),
-    ACTIVE: (c.BRIGHT_YELLOW, "Active"),
-    DONE: (c.GREEN, "Done"),
+STATUSES = {
+    ABANDONED: ("Abandoned", c.RED),
+    BACKLOG: ("Backlog", c.BLUE),
+    ACTIVE: ("Active", c.BRIGHT_YELLOW),
+    DONE: ("Done", c.GREEN),
 }
 
 
 # Assign other variables
-# DB_PATH = "/home/sean/bin/.projectarium.db"
+PROD_DB_PATH = "/home/sean/bin/.projectarium.db"
 DB_PATH = ".projectarium.db"
 TERMINAL_PREFIX = "gnome-terminal --maximize --working-directory="
 NEOVIM_PREFIX = "nvim "
 
 
+# Screen layout dimensions
+SCREEN_HEIGHT, SCREEN_WIDTH = stdscr.getmaxyx()
+Y_PAD               = 1
+X_PAD               = 2
+HELP_HEIGHT         = 3
+SECTION_HEIGHT      = (SCREEN_HEIGHT - HELP_HEIGHT - (2 * Y_PAD))
+SECTION_WIDTH       = (SCREEN_WIDTH - (4 * X_PAD)) // 4 # right-hand padding
+WINDOWS             = []
+HELP_WINDOW         = None
+INACTIVE_CARD_HEIGHT= 3
+ACTIVE_CARD_HEIGHT  = 6
+MODES = [BLAND := 0, COLORED := 1]
+           
+class StateManager:
+    def __init__(self, dm,):
+        self.dm = dm
+        self.active_window = 0
+        self.active_card = -1
+        self.mode = BLAND
 
-modes = ["normal", "colored"]
-current_mode = modes[0]
-def shift_mode():
-    global current_mode
-    if current_mode == "normal":
-        current_mode = "colored"
-        draw_windows()
-    else:
-        current_mode = "normal"
-        draw_windows()
+    def init(self):
+        self.update_windows()
+
+    def update_windows(self):
+        for window in WINDOWS:
+            if self.active_card == -1 and len(window.cards) > 0:
+                self.active_window = window.id
+                self.active_card = 0
+                window.cards[active_card].activate()
+            window.update(self.dm)
+
+
+    def next_mode(self):
+        self.mode = (self.mode + 1) % len(MODES)
+
+
+class DatabaseManager:
+    def __init__(self, conn,):
+        self.conn = conn
+        self.cursor = conn.cursor()
+        self.init()
+
+    def init(self,):
+        # Create the 'projects' table
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS projects (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                description TEXT CHECK(LENGTH(description) <= 29),
+                path TEXT NOT NULL,
+                file TEXT,
+                status TEXT NOT NULL,
+                language TEXT
+            )
+        ''')
+        # Create the 'todo' table
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS todo (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                description TEXT NOT NULL UNIQUE,
+                priority TEXT,
+                deleted BOOLEAN NOT NULL DEFAULT 0,
+                project_id,
+                FOREIGN KEY (project_id) REFERENCES projects (id)
+            )
+        ''')
+
+        self.conn.commit()
+
+        if DB_PATH == ".projectarium.db":
+            self.init_populate()
+
+    def init_populate(self):
+        if DB_PATH == ".projectarium.db":
+            # Optional: Insert some default data only if the database is empty
+            self.cursor.execute("SELECT COUNT(*) FROM projects")
+            if self.cursor.fetchone()[0] == 0:
+                default_projects = [
+                    ("WotR",            "Wizards of the Rift",          "/home/sean/code/paused/godot/Wizards-of-the-Rift/","",                 "Abandoned",  "Godot"),
+                    ("LearnScape",      "General learning visualizer",  "/home/sean/code/paused/LearnScape/",               "learnscape.py",    "Abandoned",  "Python"),
+                    ("ROMs",            "ROM emulation optimization",   "/home/sean/code/future/ROMs/",                     "",                 "Backlog",      "C"),
+                    ("goverse",         "Go VCS application",           "/home/sean/code/active/go/goverse/",               "cli/main.go",      "Active",       "Go"),
+                    ("projectarium",    "Project progress tracker",     "/home/sean/code/active/python/projectarium/",      "projectarium.py",  "Active",       "Python"),
+                    ("snr",             "Search and replace plugin",    "/home/sean/.config/nvim/lua/snr/",                 "init.lua",         "Active",       "Lua"),
+                    ("todua",           "Todo list for Neovim",         "/home/sean/.config/nvim/lua/todua/",               "init.lua",         "Active",       "Lua"),
+                    ("macro-blues",     "Custom macropad firmware",     "/home/sean/code/active/c/macro-c.BLUEs/",            "macro-c.BLUEs",      "Active",       "C"),
+                    ("leetcode",        "Coding interview practice",    "/home/sean/code/paused/leetcode/",                 "",                 "Active",       "Python"),
+                    ("TestTaker",       "ChatGPT->Python test maker",   "/home/sean/code/paused/TestTaker/",                "testtaker.py",     "Active",       "Python"),
+                    ("Mission-Uplink",  "TFG Mission Uplink",           "/home/sean/code/tfg/Mission-Uplink/",              "README.md",        "Active",       "Go,C"),
+                    ("Sorter",          "Sorting algoithm visualizer",  "/home/sean/code/done/Sorter/",                     "sorter.py",        "Done",         "Python"),
+                    ("landing-page",    "Cute application launcher",    "/home/sean/code/done/landing-page/",               "landing-page.py",  "Done",         "Python"),
+                    ################"   valid description length  "################################################################################################
+                ]
+                self.cursor.executemany('''
+                    INSERT INTO projects (name, description, path, file, status, language)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', default_projects)
+                self.conn.commit()
+
+            # Optional: Insert some default data only if the database is empty
+            self.cursor.execute("SELECT COUNT(*) FROM todo")
+            if self.cursor.fetchone()[0] == 0:
+                default_todo = [
+                    ("i have a thing to do", 0, False, 1),
+                    ("here is another thing!", 0, False, 1),
+                    ("another thing, i have to do", 0, False, 1),
+                ]
+                self.cursor.executemany('''
+                    INSERT INTO todo (description, priority, deleted, project_id)
+                    VALUES (?, ?, ?, ?)
+                ''', default_todo)
+                self.conn.commit()
+
+
+    def pull_card_data(self, title):
+        # get cards, then append to the end of the query result the number of tasks the card has
+        return [tuple(list(row) + [self.cursor.execute("SELECT COUNT(*) FROM todo WHERE project_id = ?;", (row[0],)).fetchone()[0]])
+            for row in self.cursor.execute("SELECT * FROM projects WHERE status = ? ORDER BY LOWER(name);", (title,)).fetchall()]
+
+
 
 windows = []
 def draw_windows():
@@ -156,19 +269,24 @@ def decrement_active_window():
         windows[HELP].refresh()
 
 
-# def add_card(name, path, file=""):
-    # cards.append(Card(name, path, file))
+class CommandWindow:
+    def __init__(self,):
+        self.h = HELP_HEIGHT
+        self.w = SCREEN_WIDTH
+        self.y = SCREEN_HEIGHT - HELP_HEIGHT
+        self.x = 0
+        self.win = curses.newwin(self.h, self.w, self.y, self.x)
+        self.win.box()
+
 
 class Window:
-    def __init__(self, id, height, width, y, x, conn, title, title_pos=2, color=c.WHITE, style=c.NORMAL):
+    def __init__(self, id, height, width, y, x, title, title_pos=2, color=c.WHITE, style=c.NORMAL):
         self.id = id
         self.h = height
         self.w = width
         self.y = y
         self.x = x
         self.win = curses.newwin(self.h, self.w, self.y, self.x)
-        self.conn = conn
-        self.cursor = self.conn.cursor()
         self.title = title
         self.color = color
         self.style = style
@@ -180,68 +298,69 @@ class Window:
     def has_cards(self):
         return len(self.cards) > 0
 
-    def pull(self):
-        self.cursor.execute("SELECT * FROM projects WHERE status = ? ORDER BY LOWER(name);", (self.title,))
-        rows = self.cursor.fetchall()
+    def update(self, dm,):
 
-        self.cards.clear()
         self.card_offset = 0
-        for row in rows:
-            self.cursor.execute("SELECT COUNT(*) FROM todo WHERE project_id = ?;", (row[0],))
-            todo_count = self.cursor.fetchone()[0]
-            self.cards.append(Card(row[0], 3, self.w, self.y + self.card_offset, self.x + 2, row[1], row[3], row[4], row[2], row[6], todo_count=todo_count))
-            self.card_offset += 3
 
+        # create all Cards from DB
+        self.cards = [Card(id=card[0], # id
+            height=INACTIVE_CARD_HEIGHT , width=self.w - (2 * X_PAD),y=self.y + Y_PAD, x=2 * X_PAD,              # UI elements
+            name=card[1], path=card[3], description=card[2], file=card[4], language=card[6], todo_count=card[7]) # Card data
+                for card in dm.pull_card_data(self.title)]
 
-    def contains(self, name):
-        # for card in self.cards:
-        # if name in lambda x: self.cards[x].name:
-            # print("fail")
-        pass
+        if len(self.cards) > 0:
+            self.cards[0].activate()
+        # draw all Cards
+        for card in self.cards:
+            card.draw(self.card_offset)
+            self.card_offset += 3 if not card.active else 6
+
+        # draw this Window
+        self.draw()
 
     def scrunch(self):
         for card in self.cards:
             card.unshove()
 
-    def regress(self):
-        global active_window
-        if active_window <= 1:
-            return
-        self.cursor.execute('''
-            UPDATE projects SET status = ? WHERE name = ?
-        ''', (windows[active_window - 1].title, windows[active_window].cards[active_card].name))
-        active_window -= 1
-        progress_card_name = self.cards[active_card].name
-        self.pull()
-        windows[active_window].pull()
-        self.conn.commit()
-        self.draw()
-        self.refresh()
-        windows[active_window].activate_one(progress_card_name)
-        windows[active_window].draw()
-        windows[active_window].refresh()
-        windows[HELP].draw_help()
-        windows[HELP].refresh()
-
-    def progress(self):
-        global active_window
-        if active_window >= 4:
-            return
-        self.cursor.execute('''
-            UPDATE projects SET status = ? WHERE name = ?
-        ''', (windows[active_window + 1].title, windows[active_window].cards[active_card].name))
-        active_window += 1
-        progress_card_name = self.cards[active_card].name
-        self.pull()
-        windows[active_window].pull()
-        self.conn.commit()
-        self.draw()
-        self.refresh()
-        windows[active_window].activate_one(progress_card_name)
-        windows[active_window].draw()
-        windows[active_window].refresh()
-        windows[HELP].draw_help()
-        windows[HELP].refresh()
+    # def regress(self):
+    #     global active_window
+    #     if active_window <= 1:
+    #         return
+    #     # self.cursor.execute('''
+    #     #     UPDATE projects SET status = ? WHERE name = ?
+    #     # ''', (windows[active_window - 1].title, windows[active_window].cards[active_card].name))
+    #     active_window -= 1
+    #     progress_card_name = self.cards[active_card].name
+    #     self.pull()
+    #     windows[active_window].pull()
+    #     # self.conn.commit()
+    #     self.draw()
+    #     self.refresh()
+    #     windows[active_window].activate_one(progress_card_name)
+    #     windows[active_window].draw()
+    #     windows[active_window].refresh()
+    #     windows[HELP].draw_help()
+    #     windows[HELP].refresh()
+    #
+    # def progress(self):
+    #     global active_window
+    #     if active_window >= 4:
+    #         return
+    #     # self.cursor.execute('''
+    #     #     UPDATE projects SET status = ? WHERE name = ?
+    #     # ''', (windows[active_window + 1].title, windows[active_window].cards[active_card].name))
+    #     active_window += 1
+    #     progress_card_name = self.cards[active_card].name
+    #     self.pull()
+    #     windows[active_window].pull()
+    #     # self.conn.commit()
+    #     self.draw()
+    #     self.refresh()
+    #     windows[active_window].activate_one(progress_card_name)
+    #     windows[active_window].draw()
+    #     windows[active_window].refresh()
+    #     windows[HELP].draw_help()
+    #     windows[HELP].refresh()
 
     def activate_one(self, name):
         global active_card
@@ -256,19 +375,19 @@ class Window:
     def add_project(self):
         answers = self.draw_help(getting_input=True)
         if answers is not None:
-            self.cursor.execute('''
-                INSERT INTO projects (name, description, path, file, status, language)
-                VALUES (?, ?, ?, ?, 'Backlog', ?)
-            ''', (answers[0], answers[1], answers[2], answers[3], answers[4],))
-            self.conn.commit()
+            # self.cursor.execute('''
+            #     INSERT INTO projects (name, description, path, file, status, language)
+            #     VALUES (?, ?, ?, ?, 'Backlog', ?)
+            # ''', (answers[0], answers[1], answers[2], answers[3], answers[4],))
+            # self.conn.commit()
             windows[BACKLOG].pull()
             windows[BACKLOG].draw_cards()
             windows[BACKLOG].refresh()
 
     def delete_project(self):
         to_delete = windows[active_window].cards[active_card]
-        self.cursor.execute("DELETE FROM projects WHERE name = ?", (to_delete.name,))
-        self.conn.commit()
+        # self.cursor.execute("DELETE FROM projects WHERE name = ?", (to_delete.name,))
+        # self.conn.commit()
         windows[active_window].pull()
         windows[active_window].draw()
         windows[active_window].refresh()
@@ -345,7 +464,6 @@ class Window:
                     selection = 0
                     if input in ('1', '2', '3', '4', '5'):
                         selection = int(input) - 1
-                    log.info(selection)
 
                     edit_card = windows[active_window].cards[active_card]
                     existing_answers = [edit_card.name, edit_card.description, edit_card.path, edit_card.file, edit_card.language]
@@ -375,8 +493,8 @@ class Window:
                     input = self.win.getstr(1, x).decode("utf-8")
                     self.win.attroff(c.WHITE)
 
-                    self.cursor.execute(f"UPDATE projects SET {questions[selection].strip("*")} = ? WHERE name = ?", (input, edit_card.name,))
-                    self.conn.commit()
+                    # self.cursor.execute(f"UPDATE projects SET {questions[selection].strip("*")} = ? WHERE name = ?", (input, edit_card.name,))
+                    # self.conn.commit()
 
                     curses.noecho()
                     self.draw_help()
@@ -438,6 +556,7 @@ class Window:
                     card.is_shoved = True
             card.win.resize(card.height, card.width - 4)
 
+            current_mode = "normal"
             if current_mode == "normal":
                 card.win.attron(c.DIM_WHITE | c.BOLD) if card.active else card.win.attron(c.DARK_GREY | c.BOLD)
                 card.win.box()
@@ -489,20 +608,20 @@ class Window:
             self.draw_help()
         self.win.refresh()
 
-        self.draw_cards()
+        # self.draw_cards()
 
     def refresh(self):
         self.win.refresh()
 
 
 class Card():
-    def __init__(self, id, height, width, y, x, name, path, file="", description="", language="", todo_count=0):
+    def __init__(self, id, height, width, y, x, name, path, description="", file="", language="", todo_count=0):
         self.id = id
-        self.height = height
-        self.width = width
+        self.h = height
+        self.w = width
         self.y = y
         self.x = x
-        self.win = curses.newwin(self.height, self.width - 4, self.y + 1, self.x)
+        self.win = curses.newwin(self.h, self.w, self.y, self.x)
         self.name = name
         self.path = path
         self.file = file
@@ -510,7 +629,7 @@ class Card():
         self.language = language
         self.todo_count = todo_count
         self.active = False
-        self.color = c.WHITE
+        self.text_color = c.WHITE
         self.is_shoved = False
         self.is_scrunched = False
         self.todo_window = None
@@ -522,21 +641,23 @@ class Card():
     def clear(self):
         self.win.erase()
 
-    def draw(self):
-        # if self.active:
-            # self.draw_active()
-        # else:
-            # self.clear()
-        pass
+    def draw(self, y_offset):
+        self.win.mvwin(self.y + y_offset, self.x)
+        self.win.box()
 
-    def refresh(self):
+        self.win.addstr(Y_PAD, X_PAD, self.name, self.text_color | c.BOLD)
+        self.win.addstr(Y_PAD, self.w - len(self.language) - X_PAD, self.language, self.text_color | c.BOLD)
+        if self.active:
+            self.draw_name_border()
         self.win.refresh()
 
     def activate(self):
         self.active = True
+        self.win.resize(ACTIVE_CARD_HEIGHT, self.w)
 
     def deactivate(self):
         self.active = False
+        self.win.resize(INACTIVE_CARD_HEIGHT, self.w)
 
     def shove(self, force=False):
         if not self.is_shoved or force:
@@ -669,146 +790,76 @@ class Card():
 
 
 def init():
-    global active_card, active_window
     stdscr.clear()
 
     curses.curs_set(0)
     curses.noecho()
     curses.set_escdelay(1)
+    stdscr.keypad(True)
 
     stdscr.refresh()
 
-    stdscr.keypad(True)
-
-    height, width = stdscr.getmaxyx()
-    x, y = 0, 0
-    conn = sqlite3.connect(DB_PATH)
-
-    windows.append(Window(FRAME, height - 3, width, y, x, conn, HEADER, title_pos=width // 2 - len(HEADER) // 2 - 1, color=c.WHITE, style=c.NORMAL))
-
-    section_width = (width - 8) // 4
-    x += 2
-
-    for i in range(len(statuses)):
-        windows.append(Window(list(statuses.keys())[i], height - 5, section_width, 1, x, conn, statuses[i+1][1], color=statuses[i+1][0], style=c.BOLD))
-        x += 2 + section_width
-
-    windows.append(Window(HELP, 3, width, height - 3, 0, conn, "Help", title_pos=width // 2 - len(HEADER) // 2 - 1, color=c.WHITE, style=c.NORMAL))
+    WINDOWS.extend([Window(FRAME, SCREEN_HEIGHT - HELP_HEIGHT, SCREEN_WIDTH,  0, 0, HEADER, title_pos=(SCREEN_WIDTH // 2) - (len(HEADER) // 2 - 1)),
+        Window(ABANDONED,  SECTION_HEIGHT, SECTION_WIDTH, Y_PAD, ((ABANDONED - 1) * SECTION_WIDTH) + (ABANDONED * X_PAD),   STATUSES[ABANDONED][0], color=STATUSES[ABANDONED][1]),
+        Window(BACKLOG,    SECTION_HEIGHT, SECTION_WIDTH, Y_PAD, ((BACKLOG - 1)   * SECTION_WIDTH) + (BACKLOG   * X_PAD),   STATUSES[BACKLOG][0],   color=STATUSES[BACKLOG][1]),
+        Window(ACTIVE,     SECTION_HEIGHT, SECTION_WIDTH, Y_PAD, ((ACTIVE - 1)    * SECTION_WIDTH) + (ACTIVE    * X_PAD),   STATUSES[ACTIVE][0],    color=STATUSES[ACTIVE][1]),
+        Window(DONE,       SECTION_HEIGHT, SECTION_WIDTH, Y_PAD, ((DONE - 1)      * SECTION_WIDTH) + (DONE      * X_PAD),   STATUSES[DONE][0],      color=STATUSES[DONE][1])]
+                   )
+    HELP_WINDOW = CommandWindow()
 
     # Connect to database (or create it if it doesn't exist)
-    cursor = conn.cursor()
-
-    # Create the 'projects' table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS projects (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE,
-            description TEXT CHECK(LENGTH(description) <= 29),
-            path TEXT NOT NULL,
-            file TEXT,
-            status TEXT NOT NULL,
-            language TEXT
-        )
-    ''')
-
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS todo (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            description TEXT NOT NULL UNIQUE,
-            priority TEXT,
-            deleted BOOLEAN NOT NULL DEFAULT 0,
-            project_id,
-            FOREIGN KEY (project_id) REFERENCES projects (id)
-        )
-    ''')
-
-    # Optional: Insert some default data only if the database is empty
-    cursor.execute("SELECT COUNT(*) FROM projects")
-    if cursor.fetchone()[0] == 0:
-        default_projects = [
-            ("WotR",            "Wizards of the Rift",          "/home/sean/code/paused/godot/Wizards-of-the-Rift/","",                 "Abandoned",  "Godot"),
-            ("LearnScape",      "General learning visualizer",  "/home/sean/code/paused/LearnScape/",               "learnscape.py",    "Abandoned",  "Python"),
-            ("ROMs",            "ROM emulation optimization",   "/home/sean/code/future/ROMs/",                     "",                 "Backlog",      "C"),
-            ("goverse",         "Go VCS application",           "/home/sean/code/active/go/goverse/",               "cli/main.go",      "Active",       "Go"),
-            ("projectarium",    "Project progress tracker",     "/home/sean/code/active/python/projectarium/",      "projectarium.py",  "Active",       "Python"),
-            ("snr",             "Search and replace plugin",    "/home/sean/.config/nvim/lua/snr/",                 "init.lua",         "Active",       "Lua"),
-            ("todua",           "Todo list for Neovim",         "/home/sean/.config/nvim/lua/todua/",               "init.lua",         "Active",       "Lua"),
-            ("macro-c.BLUEs",     "Custom macropad firmware",     "/home/sean/code/active/c/macro-c.BLUEs/",            "macro-c.BLUEs",      "Active",       "C"),
-            ("leetcode",        "Coding interview practice",    "/home/sean/code/paused/leetcode/",                 "",                 "Active",       "Python"),
-            ("TestTaker",       "ChatGPT->Python test maker",   "/home/sean/code/paused/TestTaker/",                "testtaker.py",     "Active",       "Python"),
-            ("Mission-Uplink",  "TFG Mission Uplink",           "/home/sean/code/tfg/Mission-Uplink/",              "README.md",        "Active",       "Go,C"),
-            ("Sorter",          "Sorting algoithm visualizer",  "/home/sean/code/done/Sorter/",                     "sorter.py",        "Done",         "Python"),
-            ("landing-page",    "Cute application launcher",    "/home/sean/code/done/landing-page/",               "landing-page.py",  "Done",         "Python"),
-            ################"   valid description length  "################################################################################################
-        ]
-        cursor.executemany('''
-            INSERT INTO projects (name, description, path, file, status, language)
-            VALUES (?, ?, ?, ?, ?, ?)
-        ''', default_projects)
-    # Optional: Insert some default data only if the database is empty
-    cursor.execute("SELECT COUNT(*) FROM todo")
-    if cursor.fetchone()[0] == 0:
-        default_todo = [
-            ("i have a thing to do", 0, False, 1),
-            ("here is another thing!", 0, False, 1),
-            ("another thing, i have to do", 0, False, 1),
-        ]
-        cursor.executemany('''
-            INSERT INTO todo (description, priority, deleted, project_id)
-            VALUES (?, ?, ?, ?)
-        ''', default_todo)
-
-    # Commit changes and close connection
-    conn.commit()
-    # conn.close()
-
-    for window in windows:
-        window.pull()
-        if len(window.cards) > 0 and active_card == -1:
-            active_card = 0
-            active_window = window.id
-            window.cards[active_card].activate()
-        window.draw()
-        window.refresh()
+    if sys.argv[0][-3:] == ".py":
+        conn = sqlite3.connect(DB_PATH)
+    else:
+        # conn = sqlite3.connect(PROD_DB_PATH)
+        conn = sqlite3.connect(DB_PATH)
         
+    dm = DatabaseManager(conn)
+    dm.init()
 
-todo_keymap = {
-    "q": lambda: windows[active_window].cards[active_card].close_todo(),
+    sm = StateManager(dm)
+    sm.init()
 
-    "a": lambda: windows[active_window].cards[active_card].add_item(),
-
-    "KEY_UP": lambda: windows[active_window].cards[active_card].up(),
-    "KEY_DOWN": lambda: windows[active_window].cards[active_card].down(),
-    "d": lambda: windows[active_window].cards[active_card].delete_item(),
-    "e": lambda: windows[active_window].cards[active_card].edit_item(),
-}
-
-keymap = {
-    "q": lambda: exit(0),
-    "\x1b": lambda: exit(0),
-
-    "a": lambda:  windows[HELP].add_project(),
-    "d": lambda:  windows[HELP].delete_project(),
-    "e": lambda:  windows[HELP].edit_project(),
-
-    "c": lambda: os.system(TERMINAL_PREFIX + windows[active_window].cards[active_card].path),
-    "n": lambda: os.system(TERMINAL_PREFIX + windows[active_window].cards[active_card].path + " -- bash -c \'" +  NEOVIM_PREFIX + windows[active_window].cards[active_card].file + "\'") if windows[active_window].cards[active_card].file != "" else "",
-    "t": lambda: windows[active_window].cards[active_card].open_todo(),
-    "p": lambda: windows[active_window].progress(),
-    "r": lambda: windows[active_window].regress(),
-
-    "KEY_LEFT": lambda: decrement_active_window(),
-    "KEY_RIGHT": lambda: increment_active_window(),
-    "KEY_UP": lambda: decrement_active_card(),
-    "KEY_DOWN": lambda: increment_active_card(),
-
-    "m": lambda: shift_mode(),
-
-    # "": lambda: ,
-}
 
 def main(stdscr):
     init()
+
+    # dm.pull_card_data("Abandoned")
+
+    todo_keymap = {
+        "q": lambda: windows[active_window].cards[active_card].close_todo(),
+
+        "a": lambda: windows[active_window].cards[active_card].add_item(),
+
+        "KEY_UP": lambda: windows[active_window].cards[active_card].up(),
+        "KEY_DOWN": lambda: windows[active_window].cards[active_card].down(),
+        "d": lambda: windows[active_window].cards[active_card].delete_item(),
+        "e": lambda: windows[active_window].cards[active_card].edit_item(),
+    }
+
+    keymap = {
+        "q": lambda: exit(0),
+        "\x1b": lambda: exit(0),
+
+        "a": lambda:  windows[HELP].add_project(),
+        "d": lambda:  windows[HELP].delete_project(),
+        "e": lambda:  windows[HELP].edit_project(),
+
+        "c": lambda: os.system(TERMINAL_PREFIX + windows[active_window].cards[active_card].path),
+        "n": lambda: os.system(TERMINAL_PREFIX + windows[active_window].cards[active_card].path + " -- bash -c \'" +  NEOVIM_PREFIX + windows[active_window].cards[active_card].file + "\'") if windows[active_window].cards[active_card].file != "" else "",
+        "t": lambda: windows[active_window].cards[active_card].open_todo(),
+        "p": lambda: windows[active_window].progress(),
+        "r": lambda: windows[active_window].regress(),
+
+        "KEY_LEFT": lambda: decrement_active_window(),
+        "KEY_RIGHT": lambda: increment_active_window(),
+        "KEY_UP": lambda: decrement_active_card(),
+        "KEY_DOWN": lambda: increment_active_card(),
+
+        "m": lambda: sm.next_mode(),
+
+        # "": lambda: ,
+    }
 
     # Main loop
     while True:
