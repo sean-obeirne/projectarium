@@ -44,10 +44,10 @@ ACTIVE = 2
 DONE = 3
 HELP = 4
 STATUSES = {
-    ABANDONED: ("Abandoned", c.RED),
-    BACKLOG: ("Backlog", c.BLUE),
-    ACTIVE: ("Active", c.BRIGHT_YELLOW),
-    DONE: ("Done", c.GREEN),
+    "Abandoned":    c.RED,
+    "Backlog":      c.BLUE,
+    "Active":       c.BRIGHT_YELLOW,
+    "Done":         c.GREEN,
 }
 
 
@@ -58,18 +58,38 @@ TERMINAL_PREFIX = "gnome-terminal --maximize --working-directory="
 NEOVIM_PREFIX = "nvim "
 
 
-# Screen layout dimensions
+# UI dimensions
 SCREEN_HEIGHT, SCREEN_WIDTH = stdscr.getmaxyx()
-Y_PAD               = 1
-X_PAD               = 2
-HELP_HEIGHT         = 3
-SECTION_HEIGHT      = (SCREEN_HEIGHT - HELP_HEIGHT - (2 * Y_PAD))
-SECTION_WIDTH       = (SCREEN_WIDTH - (4 * X_PAD)) // 4 # right-hand padding
-WINDOWS             = []
-HELP_WINDOW         = None
-INACTIVE_CARD_HEIGHT= 3
-ACTIVE_CARD_HEIGHT  = 6
+Y_PAD                   = 1
+X_PAD                   = 2
+COMMAND_WINDOW_HEIGHT   = 3
+SECTION_HEIGHT          = (SCREEN_HEIGHT - COMMAND_WINDOW_HEIGHT - (2 * Y_PAD))
+SECTION_WIDTH           = (SCREEN_WIDTH - (4 * X_PAD)) // 4 # right-hand padding
+WINDOWS                 = []
+HELP_WINDOW             = None
+INACTIVE_CARD_HEIGHT    = 3
+ACTIVE_CARD_HEIGHT      = 6
+
+NO_TODO_ITEMS       = 0
+LOW_TODO_ITEMS      = 3
+MEDIUM_TODO_ITEMS   = 6
+MAX_TODO_ITEMS      = 99
+REGULAR             = 0
+DARK                = 1
+TODO_COLORS = [(NO_TODO_ITEMS, REGULAR, c.DIM_WHITE), (LOW_TODO_ITEMS, REGULAR, c.GREEN), (MEDIUM_TODO_ITEMS, REGULAR, c.BRIGHT_YELLOW), (MAX_TODO_ITEMS, REGULAR, c.RED),
+               (NO_TODO_ITEMS, DARK, c.GUTTER), (LOW_TODO_ITEMS, DARK, c.LIGHT_GREEN), (MEDIUM_TODO_ITEMS, DARK, c.YELLOW), (MAX_TODO_ITEMS, DARK, c.LIGHT_RED)
+               ]
+color_code = lambda tc, s: [color for limit, shade, color in TODO_COLORS if tc <= limit and s == shade][0]
+
+
 MODES = [BLAND := 0, COLORED := 1]
+
+# Global helper functions
+def draw_box(window, attributes):
+    window.attron(attributes)
+    window.box()
+    window.attroff(attributes)
+
            
 class StateManager:
     def __init__(self, dm,):
@@ -90,31 +110,31 @@ class StateManager:
 
     def update_windows(self): # TODO: only update active window and new active window
         for window in WINDOWS:
-            window.update(self.dm, self.active_window, self.active_card)
+            window.update(self.dm, self.active_window, self.active_card, self.mode)
 
     def update_window(self, window_id=None):
         window_id = self.active_window if window_id is None else window_id
-        log.info("we are updating: " + str(window_id))
         WINDOWS[window_id].update(self.dm, window_id, self.active_card)
 
 
     def next_mode(self):
         self.mode = (self.mode + 1) % len(MODES)
+        self.update_windows()
 
     def up(self):
         if self.active_card > 0:
             self.active_card -= 1
-            self.update_window()
+            self.update_windows()
 
     def down(self):
         if self.active_card < len(WINDOWS[self.active_window].cards) - 1:
             self.active_card += 1
-            self.update_window()
+            self.update_windows()
 
     def right(self):
         if self.active_window < 3:
             self.active_window += 1
-            self.active_card = min(self.active_card, len(WINDOWS[self.active_window].cards) - 1)
+            self.active_card = min(self.active_card, max((length := len(WINDOWS[self.active_window].cards)) - 1, 0))
             self.update_windows()
             #TODO: get this to work
             # self.update_window()
@@ -123,8 +143,28 @@ class StateManager:
     def left(self):
         if self.active_window > 0:
             self.active_window -= 1
-            self.active_card = min(self.active_card, len(WINDOWS[self.active_window].cards) - 1)
+            # self.active_card = min(self.active_card, len(WINDOWS[self.active_window].cards) - 1)
+            self.active_card = min(self.active_card, max((length := len(WINDOWS[self.active_window].cards)) - 1, 0))
             self.update_windows()
+
+    def progress(self):
+        card = WINDOWS[self.active_window].cards[self.active_card]
+        if self.active_window >= 3: return
+        self.dm.progress(card.name, self.active_window)
+        self.update_windows()
+        self.up()
+        if len(WINDOWS[self.active_window].cards) == 0:
+            self.right()
+        
+    def regress(self):
+        card = WINDOWS[self.active_window].cards[self.active_card]
+        if self.active_window <= 0: return
+        self.dm.regress(card.name, self.active_window)
+        self.update_windows()
+        self.up()
+        if len(WINDOWS[self.active_window].cards) == 0:
+            self.left()
+        
 
 
 class DatabaseManager:
@@ -210,6 +250,13 @@ class DatabaseManager:
         return [tuple(list(row) + [self.cursor.execute("SELECT COUNT(*) FROM todo WHERE project_id = ?;", (row[0],)).fetchone()[0]])
             for row in self.cursor.execute("SELECT * FROM projects WHERE status = ? ORDER BY LOWER(name);", (title,)).fetchall()]
 
+    def progress(self, name, current_status):
+        self.cursor.execute("UPDATE projects SET status = ? WHERE name = ?", (list(STATUSES.keys())[current_status + 1], name,))
+        self.conn.commit()
+
+    def regress(self, name, current_status):
+        self.cursor.execute("UPDATE projects SET status = ? WHERE name = ?", (list(STATUSES.keys())[current_status - 1], name,))
+        self.conn.commit()
 
 
 # in_todo = False
@@ -217,12 +264,151 @@ class DatabaseManager:
 
 class CommandWindow:
     def __init__(self,):
-        self.h = HELP_HEIGHT
+        self.h = COMMAND_WINDOW_HEIGHT
         self.w = SCREEN_WIDTH
-        self.y = SCREEN_HEIGHT - HELP_HEIGHT
+        self.y = SCREEN_HEIGHT - COMMAND_WINDOW_HEIGHT
         self.x = 0
         self.win = curses.newwin(self.h, self.w, self.y, self.x)
+
+    def draw(self):
+        self.win.erase()
+
+
+    def draw_help(self, getting_input=False, editting=False):
+        self.win.erase()
+        self.win.attron(c.WHITE)
         self.win.box()
+        self.win.attroff(c.WHITE)
+        if in_todo:
+            if getting_input:
+                self.win.attron(c.BRIGHT_YELLOW | c.BOLD)
+                if editting:
+                    self.win.addstr(1, 3, "edit: ")
+                else:
+                    self.win.addstr(1, 4, "add: ")
+                self.win.box()
+                self.win.attroff(c.BRIGHT_YELLOW | c.BOLD)
+                # self.win.addstr
+                curses.echo()
+                input = self.win.getstr(1, 9).decode("utf-8")
+                curses.noecho()
+                self.draw_help(False)
+                return [input]
+            else:
+                strings = ["add", "delete", "edit", "quit"]
+        else:
+            if getting_input:
+                questions = ["name*", "description", "path*", "file", "language"]
+                if editting:
+
+                    self.win.attron(c.BRIGHT_YELLOW | c.BOLD)
+                    self.win.box()
+                    x = 4
+                    prompt = "Column to edit: "
+                    self.win.addstr(1, x, prompt)
+                    x += len(prompt)
+                    self.win.attroff(c.BRIGHT_YELLOW | c.BOLD)
+                    for i, question in enumerate(questions):
+
+                        self.win.attron(c.ORANGE | c.BOLD)
+                        prompt = f"{i+1}. "
+                        self.win.addstr(1, x, prompt)
+                        x += len(prompt)
+                        self.win.attroff(c.ORANGE | c.BOLD)
+
+                        self.win.attron(c.WHITE)
+                        prompt = f"{question} "
+                        self.win.addstr(1, x, prompt)
+                        x += len(prompt)
+                        self.win.attroff(c.WHITE)
+
+                    self.win.attron(c.WHITE)
+                    prompt = f" :  "
+                    self.win.addstr(1, x, prompt)
+                    x += len(prompt)
+                    self.win.attroff(c.WHITE)
+
+                    curses.echo()
+
+                    self.win.attron(c.WHITE)
+                    input = chr(self.win.getch(1, x))
+                    self.win.attroff(c.WHITE)
+
+                    selection = 0
+                    if input in ('1', '2', '3', '4', '5'):
+                        selection = int(input) - 1
+
+                    edit_card = windows[active_window].cards[active_card]
+                    existing_answers = [edit_card.name, edit_card.description, edit_card.path, edit_card.file, edit_card.language]
+                    self.win.erase()
+
+                    x = 4
+                    self.win.attron(c.BRIGHT_YELLOW | c.BOLD)
+                    self.win.box()
+                    prompt = f"Current value: "
+                    self.win.addstr(1, x, prompt)
+                    x += len(prompt)
+                    self.win.attroff(c.BRIGHT_YELLOW | c.BOLD)
+
+                    self.win.attron(c.WHITE)
+                    prompt = f"{existing_answers[selection]}  "
+                    self.win.addstr(1, x, prompt)
+                    x += len(prompt)
+                    self.win.attroff(c.WHITE)
+
+                    self.win.attron(c.BRIGHT_YELLOW | c.BOLD)
+                    prompt = f"New value: "
+                    self.win.addstr(1, x, prompt)
+                    x += len(prompt)
+                    self.win.attroff(c.BRIGHT_YELLOW | c.BOLD)
+
+                    self.win.attron(c.WHITE)
+                    input = self.win.getstr(1, x).decode("utf-8")
+                    self.win.attroff(c.WHITE)
+
+                    # self.cursor.execute(f"UPDATE projects SET {questions[selection].strip("*")} = ? WHERE name = ?", (input, edit_card.name,))
+                    # self.conn.commit()
+
+                    curses.noecho()
+                    self.draw_help()
+                    self.refresh()
+                    return
+                    # return ret
+                else:
+                    ret = []
+                    for question in questions:
+                        self.win.attron(c.BRIGHT_YELLOW | c.BOLD)
+                        self.win.addstr(1, 4, question + ": ")
+                        self.win.box()
+                        self.win.attroff(c.BRIGHT_YELLOW | c.BOLD)
+                        curses.echo()
+                        input = self.win.getstr(1, 4 + len(question) + 2).decode("utf-8")
+                        curses.noecho()
+                        ret.append(input)
+                        self.win.erase()
+                    self.draw_help()
+                    self.refresh()
+                    return ret
+
+            strings = ["add", "delete", "edit", "cd", "nvim", "todo", "progress", "regress", "mode", "quit"]
+
+        y = 1
+        x = 4
+        for string in strings:
+            self.win.addstr(y, x, f"{string[0]}: ", c.CYAN)
+            x += 3
+            if not in_todo and \
+                ((active_window == 1 and string == "regress") \
+                or (active_window == HELP-1 and string == "progress") \
+                or (windows[active_window].cards[active_card].file in (None, "") and string == "nvim") \
+                or (windows[active_window].cards[active_card].path == "" and string == "cd") \
+                or (windows[active_window].cards[active_card].description in(None, "") and string == "description")):
+                color = c.DARK_GREY
+            else:
+                color = c.WHITE
+            self.win.addstr(y, x, f"{string}", color)
+            x += len(string) + 5
+
 
 
 class Window:
@@ -235,7 +421,6 @@ class Window:
         self.win = curses.newwin(self.h, self.w, self.y, self.x)
         self.title = title
         self.color = color
-        self.style = style
         self.title_pos = title_pos
         self.cards = []
         self.card_offset = 0
@@ -251,7 +436,7 @@ class Window:
     def has_cards(self):
         return len(self.cards) > 0
 
-    def update(self, dm, active_window_id, active_card_index):
+    def update(self, dm, active_window_id, active_card_index, mode=0):
 
         self.card_offset = 0
 
@@ -259,7 +444,7 @@ class Window:
 
         # TODO: only draw window once
         # draw this Window
-        self.draw()
+        self.draw(active_window_id)
 
         # TODO: only activate necessary cards (below active one)
         # draw all Cards
@@ -267,49 +452,9 @@ class Window:
             if self.id == active_window_id and i == active_card_index:
                 card.activate()
 
-            card.draw(self.card_offset)
+            card.draw(self.card_offset, mode)
             self.card_offset += 3 if not card.active else 6
 
-
-    # def regress(self):
-    #     global active_window
-    #     if active_window <= 1:
-    #         return
-    #     # self.cursor.execute('''
-    #     #     UPDATE projects SET status = ? WHERE name = ?
-    #     # ''', (windows[active_window - 1].title, windows[active_window].cards[active_card].name))
-    #     active_window -= 1
-    #     progress_card_name = self.cards[active_card].name
-    #     self.pull()
-    #     windows[active_window].pull()
-    #     # self.conn.commit()
-    #     self.draw()
-    #     self.refresh()
-    #     windows[active_window].activate_one(progress_card_name)
-    #     windows[active_window].draw()
-    #     windows[active_window].refresh()
-    #     windows[HELP].draw_help()
-    #     windows[HELP].refresh()
-    #
-    # def progress(self):
-    #     global active_window
-    #     if active_window >= 4:
-    #         return
-    #     # self.cursor.execute('''
-    #     #     UPDATE projects SET status = ? WHERE name = ?
-    #     # ''', (windows[active_window + 1].title, windows[active_window].cards[active_card].name))
-    #     active_window += 1
-    #     progress_card_name = self.cards[active_card].name
-    #     self.pull()
-    #     windows[active_window].pull()
-    #     # self.conn.commit()
-    #     self.draw()
-    #     self.refresh()
-    #     windows[active_window].activate_one(progress_card_name)
-    #     windows[active_window].draw()
-    #     windows[active_window].refresh()
-    #     windows[HELP].draw_help()
-    #     windows[HELP].refresh()
 
     def activate_one(self, name):
         global active_card
@@ -348,211 +493,10 @@ class Window:
         windows[active_window].refresh()
 
 
-# id, name, description, path, file, status, language
-
-    # def draw_help(self, getting_input=False, editting=False):
-    #     self.win.erase()
-    #     self.win.attron(c.WHITE)
-    #     self.win.box()
-    #     self.win.attroff(c.WHITE)
-    #     if in_todo:
-    #         if getting_input:
-    #             self.win.attron(c.BRIGHT_YELLOW | c.BOLD)
-    #             if editting:
-    #                 self.win.addstr(1, 3, "edit: ")
-    #             else:
-    #                 self.win.addstr(1, 4, "add: ")
-    #             self.win.box()
-    #             self.win.attroff(c.BRIGHT_YELLOW | c.BOLD)
-    #             # self.win.addstr
-    #             curses.echo()
-    #             input = self.win.getstr(1, 9).decode("utf-8")
-    #             curses.noecho()
-    #             self.draw_help(False)
-    #             return [input]
-    #         else:
-    #             strings = ["add", "delete", "edit", "quit"]
-    #     else:
-    #         if getting_input:
-    #             questions = ["name*", "description", "path*", "file", "language"]
-    #             if editting:
-    #
-    #                 self.win.attron(c.BRIGHT_YELLOW | c.BOLD)
-    #                 self.win.box()
-    #                 x = 4
-    #                 prompt = "Column to edit: "
-    #                 self.win.addstr(1, x, prompt)
-    #                 x += len(prompt)
-    #                 self.win.attroff(c.BRIGHT_YELLOW | c.BOLD)
-    #                 for i, question in enumerate(questions):
-    #
-    #                     self.win.attron(c.ORANGE | c.BOLD)
-    #                     prompt = f"{i+1}. "
-    #                     self.win.addstr(1, x, prompt)
-    #                     x += len(prompt)
-    #                     self.win.attroff(c.ORANGE | c.BOLD)
-    #
-    #                     self.win.attron(c.WHITE)
-    #                     prompt = f"{question} "
-    #                     self.win.addstr(1, x, prompt)
-    #                     x += len(prompt)
-    #                     self.win.attroff(c.WHITE)
-    #
-    #                 self.win.attron(c.WHITE)
-    #                 prompt = f" :  "
-    #                 self.win.addstr(1, x, prompt)
-    #                 x += len(prompt)
-    #                 self.win.attroff(c.WHITE)
-    #
-    #                 curses.echo()
-    #
-    #                 self.win.attron(c.WHITE)
-    #                 input = chr(self.win.getch(1, x))
-    #                 self.win.attroff(c.WHITE)
-    #
-    #                 selection = 0
-    #                 if input in ('1', '2', '3', '4', '5'):
-    #                     selection = int(input) - 1
-    #
-    #                 edit_card = windows[active_window].cards[active_card]
-    #                 existing_answers = [edit_card.name, edit_card.description, edit_card.path, edit_card.file, edit_card.language]
-    #                 self.win.erase()
-    #
-    #                 x = 4
-    #                 self.win.attron(c.BRIGHT_YELLOW | c.BOLD)
-    #                 self.win.box()
-    #                 prompt = f"Current value: "
-    #                 self.win.addstr(1, x, prompt)
-    #                 x += len(prompt)
-    #                 self.win.attroff(c.BRIGHT_YELLOW | c.BOLD)
-    #
-    #                 self.win.attron(c.WHITE)
-    #                 prompt = f"{existing_answers[selection]}  "
-    #                 self.win.addstr(1, x, prompt)
-    #                 x += len(prompt)
-    #                 self.win.attroff(c.WHITE)
-    #
-    #                 self.win.attron(c.BRIGHT_YELLOW | c.BOLD)
-    #                 prompt = f"New value: "
-    #                 self.win.addstr(1, x, prompt)
-    #                 x += len(prompt)
-    #                 self.win.attroff(c.BRIGHT_YELLOW | c.BOLD)
-    #
-    #                 self.win.attron(c.WHITE)
-    #                 input = self.win.getstr(1, x).decode("utf-8")
-    #                 self.win.attroff(c.WHITE)
-    #
-    #                 # self.cursor.execute(f"UPDATE projects SET {questions[selection].strip("*")} = ? WHERE name = ?", (input, edit_card.name,))
-    #                 # self.conn.commit()
-    #
-    #                 curses.noecho()
-    #                 self.draw_help()
-    #                 self.refresh()
-    #                 return
-    #                 # return ret
-    #             else:
-    #                 ret = []
-    #                 for question in questions:
-    #                     self.win.attron(c.BRIGHT_YELLOW | c.BOLD)
-    #                     self.win.addstr(1, 4, question + ": ")
-    #                     self.win.box()
-    #                     self.win.attroff(c.BRIGHT_YELLOW | c.BOLD)
-    #                     curses.echo()
-    #                     input = self.win.getstr(1, 4 + len(question) + 2).decode("utf-8")
-    #                     curses.noecho()
-    #                     ret.append(input)
-    #                     self.win.erase()
-    #                 self.draw_help()
-    #                 self.refresh()
-    #                 return ret
-    #
-    #         strings = ["add", "delete", "edit", "cd", "nvim", "todo", "progress", "regress", "mode", "quit"]
-    #
-    #     y = 1
-    #     x = 4
-    #     for string in strings:
-    #         self.win.addstr(y, x, f"{string[0]}: ", c.CYAN)
-    #         x += 3
-    #         if not in_todo and \
-    #             ((active_window == 1 and string == "regress") \
-    #             or (active_window == HELP-1 and string == "progress") \
-    #             or (windows[active_window].cards[active_card].file in (None, "") and string == "nvim") \
-    #             or (windows[active_window].cards[active_card].path == "" and string == "cd") \
-    #             or (windows[active_window].cards[active_card].description in(None, "") and string == "description")):
-    #             color = c.DARK_GREY
-    #         else:
-    #             color = c.WHITE
-    #         self.win.addstr(y, x, f"{string}", color)
-    #         x += len(string) + 5
-
-
-    def draw_cards(self):
-        shove = False
-        for card in self.cards:
-            card.win.erase()
-            if card.active:
-                card.height = 6
-                card.active = True
-                card.color = c.WHITE
-                card.unshove()
-                shove = True # aka found active
-            else:
-                card.height = 3
-                card.active = False
-                card.color = c.WHITE
-                if shove:
-                    card.shove()
-                    card.is_shoved = True
-            card.win.resize(card.height, card.width - 4)
-
-            current_mode = "normal"
-            if current_mode == "normal":
-                card.win.attron(c.DIM_WHITE | c.BOLD) if card.active else card.win.attron(c.DARK_GREY | c.BOLD)
-                card.win.box()
-                card.draw_name_border()
-                card.win.attroff(c.DIM_WHITE | c.BOLD)
-            elif current_mode == "colored":
-                if card.todo_count == 0:
-                    card.win.attron(c.GUTTER)
-                elif card.todo_count <= 2:
-                    card.win.attron(c.LIGHT_GREEN)
-                elif card.todo_count <= 5:
-                    card.win.attron(c.YELLOW)
-                else:
-                    card.win.attron(c.LIGHT_RED)
-                card.win.box()
-                card.draw_name_border()
-                card.win.attroff(c.GUTTER | c.GREEN | c.BRIGHT_YELLOW | c.RED)
-
-            card.win.attron(card.color | c.BOLD)
-            card.win.addstr(1, 2, card.name)
-            card.win.addstr(1, card.width - 4 - len(card.language) - 2, f"{card.language}") if card.language not in (None, "") else ""
-
-            card.win.attroff(card.color | c.BOLD)
-            if card.active:
-                card.win.attron(c.WHITE)
-                start_desc = (card.width // 2) - (len(card.description) // 2) - 2 
-                card.win.addstr(3, start_desc, f"{card.description}")
-                card.win.attron(c.DARK_GREY)
-                card.win.addstr(4, card.width - 4 - len("items: ") - 2 - len(str(card.todo_count)), "items: ")
-                card.win.attroff(c.DARK_GREY)
-                if card.todo_count <= 2:
-                    card.win.attron(c.GREEN)
-                elif card.todo_count <= 5:
-                    card.win.attron(c.BRIGHT_YELLOW)
-                else:
-                    card.win.attron(c.RED)
-                card.win.attron(c.BOLD)
-                card.win.addstr(4, card.width - 4 - len(str(card.todo_count)) - 2, f"{card.todo_count}")
-                card.win.attroff(c.GREEN | c.BRIGHT_YELLOW | c.RED | c.BOLD)
-
-            card.refresh()
-
-    def draw(self):
-        self.win.attron(self.color | self.style)
-        self.win.box()
-        self.win.addstr(0, self.title_pos, f" {self.title}{" (" + str(len(self.cards)) + ") " if self.id not in (FRAME, HELP) else " "}" if self.title != "" else "")
-        self.win.attroff(self.color | self.style)
+    def draw(self, active_window_id):
+        style = self.color | c.BOLD if active_window_id == self.id else self.color
+        draw_box(self.win, style)
+        self.win.addstr(0, self.title_pos, f" {self.title} ({str(len(self.cards))}) ", (c.WHITE | c.BOLD if active_window_id == self.id else style))
         if self.id == HELP:
             self.draw_help()
         self.win.refresh()
@@ -590,14 +534,25 @@ class Card():
     def clear(self):
         self.win.erase()
 
-    def draw(self, y_offset):
+    def draw(self, y_offset, mode):
         self.win.mvwin(self.y + y_offset, self.x)
-        self.win.box()
+        # self.win.box()
 
         self.win.addstr(Y_PAD, X_PAD, self.name, self.text_color | c.BOLD)
-        self.win.addstr(Y_PAD, self.w - len(self.language) - X_PAD, self.language, self.text_color | c.BOLD)
+        self.win.addstr(Y_PAD, self.w - len(self.language) - X_PAD, self.language, self.text_color)
+
+        dark = c.DARK_GREY if mode == BLAND else color_code(self.todo_count, DARK) 
+        regular = c.WHITE if mode == BLAND or self.active and self.todo_count == 0 else color_code(self.todo_count, DARK) 
+
         if self.active:
-            self.draw_name_border()
+            draw_box(self.win, regular)
+            self.draw_name_border(regular)
+            self.win.addstr(self.y + 1, (self.w // 2) - (len(self.description) // 2), f"{self.description}", c.WHITE)  # description
+            self.win.addstr(self.y + 2, self.w - len("items: ") - 2 - len(str(self.todo_count)), "items: ")                                         # 'items: '
+            self.win.addstr(self.y + 2, self.w - len(str(self.todo_count)) - 2, f"{self.todo_count}", color_code(self.todo_count, REGULAR))                  # todo count
+        else:
+            draw_box(self.win, dark)
+
         self.win.refresh()
 
     def activate(self):
@@ -612,13 +567,15 @@ class Card():
         if not self.is_shoved or force:
             self.win.mvwin(self.y + 4, self.x)
 
-    def draw_name_border(self):
+    def draw_name_border(self, attributes):
         if self.active:
+            self.win.attron(attributes)
             self.win.addch(2, 0, '├')
             self.win.addch(0, len(self.name) + 3, '┬')
             self.win.addch(2, len(self.name) + 3, '┘')
             self.win.addch(1, len(self.name) + 3, '│')
             self.win.addstr(2, 1, '─' * (len(self.name) + 2))
+            self.win.attroff(attributes)
 
 
     def unshove(self):
@@ -631,7 +588,7 @@ class Card():
         
         self.win.attron(c.PURPLE)
         self.win.box()
-        self.draw_name_border()
+        self.draw_name_border(c.WHITE)
         self.win.attroff(c.PURPLE)
         self.win.refresh()
 
@@ -748,13 +705,13 @@ def init():
 
     stdscr.refresh()
 
-    FRAME_WINDOW = Window(FRAME, SCREEN_HEIGHT - HELP_HEIGHT, SCREEN_WIDTH,  0, 0, HEADER, title_pos=(SCREEN_WIDTH // 2) - (len(HEADER) // 2 - 1)),
+    FRAME_WINDOW = Window(FRAME, SCREEN_HEIGHT - COMMAND_WINDOW_HEIGHT, SCREEN_WIDTH,  0, 0, HEADER, title_pos=(SCREEN_WIDTH // 2) - (len(HEADER) // 2 - 1)),
 
     WINDOWS.extend([
-        Window(ABANDONED,  SECTION_HEIGHT, SECTION_WIDTH, Y_PAD, ((ABANDONED) * SECTION_WIDTH) + (ABANDONED * X_PAD),   STATUSES[ABANDONED][0], color=STATUSES[ABANDONED][1]),
-        Window(BACKLOG,    SECTION_HEIGHT, SECTION_WIDTH, Y_PAD, ((BACKLOG)   * SECTION_WIDTH) + (BACKLOG   * X_PAD),   STATUSES[BACKLOG][0],   color=STATUSES[BACKLOG][1]),
-        Window(ACTIVE,     SECTION_HEIGHT, SECTION_WIDTH, Y_PAD, ((ACTIVE)    * SECTION_WIDTH) + (ACTIVE    * X_PAD),   STATUSES[ACTIVE][0],    color=STATUSES[ACTIVE][1]),
-        Window(DONE,       SECTION_HEIGHT, SECTION_WIDTH, Y_PAD, ((DONE)      * SECTION_WIDTH) + (DONE      * X_PAD),   STATUSES[DONE][0],      color=STATUSES[DONE][1])
+        Window(ABANDONED,  SECTION_HEIGHT, SECTION_WIDTH, Y_PAD, ((ABANDONED) * SECTION_WIDTH) + (ABANDONED * X_PAD),   (a := list(STATUSES.keys())[ABANDONED]),color=STATUSES[a]),
+        Window(BACKLOG,    SECTION_HEIGHT, SECTION_WIDTH, Y_PAD, ((BACKLOG)   * SECTION_WIDTH) + (BACKLOG   * X_PAD),   (b := list(STATUSES.keys())[BACKLOG]),  color=STATUSES[b]),
+        Window(ACTIVE,     SECTION_HEIGHT, SECTION_WIDTH, Y_PAD, ((ACTIVE)    * SECTION_WIDTH) + (ACTIVE    * X_PAD),   (c := list(STATUSES.keys())[ACTIVE]),   color=STATUSES[c]),
+        Window(DONE,       SECTION_HEIGHT, SECTION_WIDTH, Y_PAD, ((DONE)      * SECTION_WIDTH) + (DONE      * X_PAD),   (d := list(STATUSES.keys())[DONE]),     color=STATUSES[d])
                     ])
 
     HELP_WINDOW = CommandWindow()
@@ -800,8 +757,8 @@ def main(stdscr):
         "c": lambda: os.system(TERMINAL_PREFIX + windows[active_window].cards[active_card].path),
         "n": lambda: os.system(TERMINAL_PREFIX + windows[active_window].cards[active_card].path + " -- bash -c \'" +  NEOVIM_PREFIX + windows[active_window].cards[active_card].file + "\'") if windows[active_window].cards[active_card].file != "" else "",
         "t": lambda: windows[active_window].cards[active_card].open_todo(),
-        "p": lambda: windows[active_window].progress(),
-        "r": lambda: windows[active_window].regress(),
+        "p": lambda: sm.progress(),
+        "r": lambda: sm.regress(),
 
         "KEY_LEFT": lambda: sm.left(),
         "KEY_RIGHT": lambda: sm.right(),
