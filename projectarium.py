@@ -37,7 +37,6 @@ c.init_16_colors()
 
 #Configure windows
 HEADER = "Projectarium"
-FRAME = 0
 ABANDONED = 0
 BACKLOG = 1
 ACTIVE = 2
@@ -63,10 +62,10 @@ SCREEN_HEIGHT, SCREEN_WIDTH = stdscr.getmaxyx()
 Y_PAD                   = 1
 X_PAD                   = 2
 COMMAND_WINDOW_HEIGHT   = 3
-SECTION_HEIGHT          = (SCREEN_HEIGHT - COMMAND_WINDOW_HEIGHT - (2 * Y_PAD))
-SECTION_WIDTH           = (SCREEN_WIDTH - (4 * X_PAD)) // 4 # right-hand padding
+SECTION_HEIGHT          = (SCREEN_HEIGHT - COMMAND_WINDOW_HEIGHT)
+SECTION_WIDTH           = (SCREEN_WIDTH - (3 * X_PAD)) // 4 # right-hand padding
 WINDOWS                 = []
-HELP_WINDOW             = None
+COMMAND_WINDOW          = None
 INACTIVE_CARD_HEIGHT    = 3
 ACTIVE_CARD_HEIGHT      = 6
 
@@ -82,7 +81,8 @@ TODO_COLORS = [(NO_TODO_ITEMS, REGULAR, c.DIM_WHITE), (LOW_TODO_ITEMS, REGULAR, 
 color_code = lambda tc, s: [color for limit, shade, color in TODO_COLORS if tc <= limit and s == shade][0]
 
 
-MODES = [BLAND := 0, COLORED := 1]
+MODES =             [BLAND := 0, COLORED := 1]
+COMMAND_STATES =    [HELP := 0,  INPUT := 1, EDIT := 2]
 
 # Global helper functions
 def draw_box(window, attributes):
@@ -92,8 +92,9 @@ def draw_box(window, attributes):
 
            
 class StateManager:
-    def __init__(self, dm,):
+    def __init__(self, dm, cw):
         self.dm = dm
+        self.cw = cw
         self.active_window = 0
         self.active_card = -1
         self.mode = BLAND
@@ -111,6 +112,7 @@ class StateManager:
     def update_windows(self): # TODO: only update active window and new active window
         for window in WINDOWS:
             window.update(self.dm, self.active_window, self.active_card, self.mode)
+        self.cw.draw(self.active_window, self.active_card)
 
     def update_window(self, window_id=None):
         window_id = self.active_window if window_id is None else window_id
@@ -263,40 +265,64 @@ class DatabaseManager:
 
 
 class CommandWindow:
-    def __init__(self,):
+    def __init__(self):
         self.h = COMMAND_WINDOW_HEIGHT
         self.w = SCREEN_WIDTH
         self.y = SCREEN_HEIGHT - COMMAND_WINDOW_HEIGHT
         self.x = 0
         self.win = curses.newwin(self.h, self.w, self.y, self.x)
+        self.states = [HELP := 0, INPUT := 1]
+        self.state = HELP
+        # self.mode = 
 
-    def draw(self):
+    def set_state(self, state):
+        self.state = state
+
+    def init(self):
+        self.state = HELP
+
+    def draw(self, active_window, active_card):
         self.win.erase()
+        y = Y_PAD
+        x = X_PAD * 2
+        if self.state == HELP:
+            for string in ["add", "delete", "edit", "cd", "nvim", "todo", "progress", "regress", "mode", "quit"]:
+                self.win.addstr(y, x, f"{string[0]}: ", c.CYAN)
+                x += 3
+                if (active_window == 0 and string == "regress") \
+                    or (active_window == 3 and string == "progress") \
+                    or (WINDOWS[active_window].cards[active_card].file in (None, "") and string == "nvim") \
+                    or (WINDOWS[active_window].cards[active_card].path == "" and string == "cd") \
+                    or (WINDOWS[active_window].cards[active_card].description in(None, "") and string == "description"):
+                    color = c.DARK_GREY
+                else:
+                    color = c.WHITE
+                self.win.addstr(y, x, f"{string}", color)
+                x += len(string) + 5
+
+        draw_box(self.win, c.WHITE)
+        self.win.refresh()
+
 
 
     def draw_help(self, getting_input=False, editting=False):
-        self.win.erase()
-        self.win.attron(c.WHITE)
-        self.win.box()
-        self.win.attroff(c.WHITE)
-        if in_todo:
-            if getting_input:
-                self.win.attron(c.BRIGHT_YELLOW | c.BOLD)
-                if editting:
-                    self.win.addstr(1, 3, "edit: ")
-                else:
-                    self.win.addstr(1, 4, "add: ")
-                self.win.box()
-                self.win.attroff(c.BRIGHT_YELLOW | c.BOLD)
-                # self.win.addstr
-                curses.echo()
-                input = self.win.getstr(1, 9).decode("utf-8")
-                curses.noecho()
-                self.draw_help(False)
-                return [input]
-            else:
-                strings = ["add", "delete", "edit", "quit"]
-        else:
+        # if in_todo:
+        #     if getting_input:
+        #         self.win.attron(c.BRIGHT_YELLOW | c.BOLD)
+        #         if editting:
+        #             self.win.addstr(1, 3, "edit: ")
+        #         else:
+        #             self.win.addstr(1, 4, "add: ")
+        #         self.win.box()
+        #         self.win.attroff(c.BRIGHT_YELLOW | c.BOLD)
+        #         # self.win.addstr
+        #         curses.echo()
+        #         input = self.win.getstr(1, 9).decode("utf-8")
+        #         curses.noecho()
+        #         self.draw_help(False)
+        #         return [input]
+        #     else:
+        #         strings = ["add", "delete", "edit", "quit"]
             if getting_input:
                 questions = ["name*", "description", "path*", "file", "language"]
                 if editting:
@@ -390,24 +416,7 @@ class CommandWindow:
                     self.refresh()
                     return ret
 
-            strings = ["add", "delete", "edit", "cd", "nvim", "todo", "progress", "regress", "mode", "quit"]
-
-        y = 1
-        x = 4
-        for string in strings:
-            self.win.addstr(y, x, f"{string[0]}: ", c.CYAN)
-            x += 3
-            if not in_todo and \
-                ((active_window == 1 and string == "regress") \
-                or (active_window == HELP-1 and string == "progress") \
-                or (windows[active_window].cards[active_card].file in (None, "") and string == "nvim") \
-                or (windows[active_window].cards[active_card].path == "" and string == "cd") \
-                or (windows[active_window].cards[active_card].description in(None, "") and string == "description")):
-                color = c.DARK_GREY
-            else:
-                color = c.WHITE
-            self.win.addstr(y, x, f"{string}", color)
-            x += len(string) + 5
+           
 
 
 
@@ -497,8 +506,8 @@ class Window:
         style = self.color | c.BOLD if active_window_id == self.id else self.color
         draw_box(self.win, style)
         self.win.addstr(0, self.title_pos, f" {self.title} ({str(len(self.cards))}) ", (c.WHITE | c.BOLD if active_window_id == self.id else style))
-        if self.id == HELP:
-            self.draw_help()
+        # if self.id == HELP:
+            # self.draw_help()
         self.win.refresh()
 
         # self.draw_cards()
@@ -547,9 +556,9 @@ class Card():
         if self.active:
             draw_box(self.win, regular)
             self.draw_name_border(regular)
-            self.win.addstr(self.y + 1, (self.w // 2) - (len(self.description) // 2), f"{self.description}", c.WHITE)  # description
-            self.win.addstr(self.y + 2, self.w - len("items: ") - 2 - len(str(self.todo_count)), "items: ")                                         # 'items: '
-            self.win.addstr(self.y + 2, self.w - len(str(self.todo_count)) - 2, f"{self.todo_count}", color_code(self.todo_count, REGULAR))                  # todo count
+            self.win.addstr(self.y + 2, (self.w // 2) - (len(self.description) // 2), f"{self.description}", c.WHITE)  # description
+            self.win.addstr(self.y + 3, self.w - len("items: ") - 2 - len(str(self.todo_count)), "items: ")                                         # 'items: '
+            self.win.addstr(self.y + 3, self.w - len(str(self.todo_count)) - 2, f"{self.todo_count}", color_code(self.todo_count, REGULAR))                  # todo count
         else:
             draw_box(self.win, dark)
 
@@ -705,16 +714,15 @@ def init():
 
     stdscr.refresh()
 
-    FRAME_WINDOW = Window(FRAME, SCREEN_HEIGHT - COMMAND_WINDOW_HEIGHT, SCREEN_WIDTH,  0, 0, HEADER, title_pos=(SCREEN_WIDTH // 2) - (len(HEADER) // 2 - 1)),
-
     WINDOWS.extend([
-        Window(ABANDONED,  SECTION_HEIGHT, SECTION_WIDTH, Y_PAD, ((ABANDONED) * SECTION_WIDTH) + (ABANDONED * X_PAD),   (a := list(STATUSES.keys())[ABANDONED]),color=STATUSES[a]),
-        Window(BACKLOG,    SECTION_HEIGHT, SECTION_WIDTH, Y_PAD, ((BACKLOG)   * SECTION_WIDTH) + (BACKLOG   * X_PAD),   (b := list(STATUSES.keys())[BACKLOG]),  color=STATUSES[b]),
-        Window(ACTIVE,     SECTION_HEIGHT, SECTION_WIDTH, Y_PAD, ((ACTIVE)    * SECTION_WIDTH) + (ACTIVE    * X_PAD),   (c := list(STATUSES.keys())[ACTIVE]),   color=STATUSES[c]),
-        Window(DONE,       SECTION_HEIGHT, SECTION_WIDTH, Y_PAD, ((DONE)      * SECTION_WIDTH) + (DONE      * X_PAD),   (d := list(STATUSES.keys())[DONE]),     color=STATUSES[d])
+        Window(ABANDONED,  SECTION_HEIGHT, SECTION_WIDTH, 0, ((ABANDONED) * SECTION_WIDTH) + (ABANDONED * X_PAD),   (a := list(STATUSES.keys())[ABANDONED]),color=STATUSES[a]),
+        Window(BACKLOG,    SECTION_HEIGHT, SECTION_WIDTH, 0, ((BACKLOG)   * SECTION_WIDTH) + (BACKLOG   * X_PAD),   (b := list(STATUSES.keys())[BACKLOG]),  color=STATUSES[b]),
+        Window(ACTIVE,     SECTION_HEIGHT, SECTION_WIDTH, 0, ((ACTIVE)    * SECTION_WIDTH) + (ACTIVE    * X_PAD),   (c := list(STATUSES.keys())[ACTIVE]),   color=STATUSES[c]),
+        Window(DONE,       SECTION_HEIGHT, SECTION_WIDTH, 0, ((DONE)      * SECTION_WIDTH) + (DONE      * X_PAD),   (d := list(STATUSES.keys())[DONE]),     color=STATUSES[d])
                     ])
 
-    HELP_WINDOW = CommandWindow()
+    COMMAND_WINDOW = CommandWindow()
+
 
     # Connect to database (or create it if it doesn't exist)
     if sys.argv[0][-3:] == ".py":
@@ -722,18 +730,22 @@ def init():
     else:
         # conn = sqlite3.connect(PROD_DB_PATH)
         conn = sqlite3.connect(DB_PATH)
+
+    cw = CommandWindow()
+    cw.init()
         
     dm = DatabaseManager(conn)
     dm.init()
 
-    sm = StateManager(dm)
+    sm = StateManager(dm, cw)
     sm.init()
 
-    return sm, dm
+    return sm, dm, cw
 
 
 def main(stdscr):
-    sm, dm = init()
+    sm, dm, cw = init()
+
 
     todo_keymap = {
         "q": lambda: windows[active_window].cards[active_card].close_todo(),
