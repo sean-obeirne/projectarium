@@ -82,7 +82,7 @@ color_code = lambda tc, s: [color for limit, shade, color in TODO_COLORS if tc <
 
 
 MODES =             [BLAND := 0, COLORED := 1]
-COMMAND_STATES =    [HELP := 0,  INPUT := 1, EDIT := 2]
+COMMAND_STATES =    [ADD := 0,   DELETE := 1, EDIT := 2]
 
 # Global helper functions
 def draw_box(window, attributes):
@@ -114,7 +114,7 @@ class StateManager:
     def update_windows(self): # TODO: only update active window and new active window
         for window in WINDOWS:
             window.update(self.dm, self.active_window, self.active_card, self.mode)
-        self.cw.draw(self.active_window, self.active_card, False)
+        self.cw.help(self.active_window, self.get_active_card(), self.in_todo)
 
     def update_window(self, window_id=None):
         window_id = self.active_window if window_id is None else window_id
@@ -131,13 +131,17 @@ class StateManager:
         self.update_windows()
 
     def open_todo(self):
-        self.tm = TodoManager(self.active_window, self.get_active_card(), self.dm.pull_todo_data(self.get_active_card().id))
-        self.in_todo = True
+        if (active := self.get_active_card()).todo_count > 0:
+            self.tm = TodoManager(self.active_window, active, self.dm.pull_todo_data(self.get_active_card().id))
+            self.in_todo = True
+            self.cw.help(self.active_window, active, self.in_todo)
+        self.update_windows(True)
 
     def close_todo(self):
         if self.tm: self.tm.close()
         self.update_windows()
         self.in_todo = False
+        self.cw.help(self.active_window, self.get_active_card() , self.in_todo)
 
     def up(self):
         if self.active_card > 0:
@@ -184,6 +188,13 @@ class StateManager:
         if len(self.get_cards()) == 0:
             self.left()
         
+    def add_item(self):
+        if self.tm:
+            log.info("GO FUC YOURSELF")
+            self.tm.update(self.dm.add_item(self.cw.get_input("add todo item: ", ADD, ""), self.get_active_card().id))
+            # self.get_active_card().todo_count += 1
+
+
 
 
 class DatabaseManager:
@@ -281,6 +292,12 @@ class DatabaseManager:
         self.cursor.execute("UPDATE projects SET status = ? WHERE name = ?", (list(STATUSES.keys())[current_status - 1], name,))
         self.conn.commit()
 
+    def add_item(self, new_item, id):
+        self.cursor.execute("INSERT INTO todo (description, priority, deleted, project_id) VALUES (?, ?, ?, ?)", (new_item, 0, False, id))
+        self.conn.commit()
+        return self.pull_todo_data(id)
+
+
 
 class TodoManager():
     def __init__(self, active_window, card, todo_list):
@@ -291,21 +308,22 @@ class TodoManager():
         self.card = card
         self.todo_list = todo_list
 
-        longest = max([len(item[1]) for item in self.todo_list])
-        self.h, self.w = self.card.todo_count + (4 * Y_PAD) + 1, longest + (4 * X_PAD) + 2
-        self.y, self.x = self.card.y, (card.x + SECTION_WIDTH - 1) if active_window < 2 else self.card.x - longest
-        self.win = curses.newwin(self.h, self.w, self.y, self.x)
 
         self.selected_item = 0
 
-        self.draw()
+        self.draw_tm()
         pass
 
     def init(self):
         pass
 
-    def draw(self):
-        draw_box(self.win, c.PURPLE)
+    def draw_tm(self):
+        longest = max([len(item[1]) for item in self.todo_list])
+        self.h, self.w = self.card.todo_count + (4 * Y_PAD) + 1, longest + (4 * X_PAD) + 2
+        self.y, self.x = self.card.y, (self.card.x + SECTION_WIDTH - 1) if self.active_window < 2 else self.card.x - longest
+        self.win = curses.newwin(self.h, self.w, self.y, self.x)
+
+        draw_box(self.win, c.WHITE)
         self.win.addstr(1, 2, "TODO:", c.WHITE | c.BOLD)
         self.win.addstr(2, 2, "-----", c.WHITE | c.BOLD)
         self.items = ["• " + item[1] for item in self.todo_list if item[3] == 0]
@@ -323,22 +341,17 @@ class TodoManager():
         
     def down(self):
         self.selected_item = min(self.selected_item + 1, self.card.todo_count - 1)
-        self.draw()
+        self.draw_tm()
             
     def up(self):
         self.selected_item = max(self.selected_item - 1, 0)
-        self.draw()
+        self.draw_tm()
 
-    # def add_item(self):
-    #     new_item = windows[HELP].draw_help(getting_input=True)[0]
-    #     if self.todo_window:
-    #         self.cursor.execute("INSERT INTO todo (description, priority, deleted, project_id) VALUES (?, ?, ?, ?)", (new_item, 0, False, self.id))
-    #         self.conn.commit()
-    #         self.todo_count += 1
-    #         draw_windows() # TODO: basically eliminate this
-    #         self.refresh()
-    #         self.close_todo()
-    #         self.open_todo()
+    def update(self, new_list):
+        self.todo_list = new_list
+        self.card.todo_count += 1
+        self.draw_tm()
+
     #
     # 
     #
@@ -376,8 +389,7 @@ class CommandWindow:
         self.y = SCREEN_HEIGHT - COMMAND_WINDOW_HEIGHT
         self.x = 0
         self.win = curses.newwin(self.h, self.w, self.y, self.x)
-        self.states = [HELP := 0, INPUT := 1]
-        self.state = HELP
+        self.state = ADD
         # self.mode = 
 
     def set_state(self, state):
@@ -386,141 +398,139 @@ class CommandWindow:
     def init(self):
         self.state = HELP
 
-    def draw(self, active_window, active_card, in_todo):
-        # self.win.erase()
-        # y = Y_PAD
-        # x = X_PAD * 2
-        # if self.state == HELP:
-        #     commands = ["add", "delete", "edit", "quit"] if in_todo else ["add", "delete", "edit", "cd", "nvim", "todo", "progress", "regress", "mode", "quit"]
-        #     for string in commands:
-        #         self.win.addstr(y, x, f"{string[0]}: ", c.CYAN)
-        #         x += 3
-        #         if (active_window == 0 and string == "regress") \
-        #             or (active_window == 3 and string == "progress") \
-        #             or (WINDOWS[active_window].cards[active_card].file in (None, "") and string == "nvim") \
-        #             or (WINDOWS[active_window].cards[active_card].path == "" and string == "cd") \
-        #             or (WINDOWS[active_window].cards[active_card].description in(None, "") and string == "description"):
-        #             color = c.DARK_GREY
-        #         else:
-        #             color = c.WHITE
-        #         self.win.addstr(y, x, f"{string}", color)
-        #         x += len(string) + 5
-        #
-        # draw_box(self.win, c.WHITE)
-        # self.win.refresh()
-        pass
+    def help(self, active_window_index, active_card, in_todo):
+        self.win.erase()
+        y = Y_PAD
+        x = X_PAD * 2
+        commands = ["add", "delete", "edit", "quit"] if in_todo else ["add", "delete", "edit", "cd", "nvim", "todo", "progress", "regress", "mode", "quit"]
+        for string in commands:
+            self.win.addstr(y, x, f"{string[0]}: ", c.CYAN)
+            x += 3
+            color = c.WHITE
+            if not in_todo and \
+                ((active_window_index == ABANDONED and string == "regress") \
+                or (active_window_index == DONE and string == "progress") \
+                or (active_card.file in (None, "") and string == "nvim") \
+                or (active_card.path == "" and string == "cd") \
+                or (active_card.description in(None, "") and string == "description")):
+                color = c.DARK_GREY
+            elif in_todo and \
+                 (active_card.todo_count <= 0):
+                pass
+            else:
+                color = c.WHITE
+            self.win.addstr(y, x, f"{string}", color)
+            x += len(string) + 5
+        draw_box(self.win, c.WHITE)
+        self.win.refresh()
+
+    def get_input(self, message, state, default=""):
+        self.win.addstr(1, (1 * X_PAD), message, c.BRIGHT_YELLOW | c.BOLD)
+        if default != "":
+            self.win.addstr(1, (1 * X_PAD) + len(message), f"({default})", c.BRIGHT_YELLOW)
+        draw_box(self.win, c.WHITE)
+
+        curses.echo()
+        input = self.win.getstr(1, (1 * X_PAD) + len(message)).decode("utf-8")
+        curses.noecho()
+        return default if input == "" else input
+        
 
 
-
-    def draw_help(self, getting_input=False, editting=False):
-        # if in_todo:
-        #     if getting_input:
-        #         self.win.attron(c.BRIGHT_YELLOW | c.BOLD)
-        #         if editting:
-        #             self.win.addstr(1, 3, "edit: ")
-        #         else:
-        #             self.win.addstr(1, 4, "add: ")
-        #         self.win.box()
-        #         self.win.attroff(c.BRIGHT_YELLOW | c.BOLD)
-        #         # self.win.addstr
-        #         curses.echo()
-        #         input = self.win.getstr(1, 9).decode("utf-8")
-        #         curses.noecho()
-        #         self.draw_help(False)
-        #         return [input]
-        #     else:
-            if getting_input:
-                questions = ["name*", "description", "path*", "file", "language"]
-                if editting:
-
-                    self.win.attron(c.BRIGHT_YELLOW | c.BOLD)
-                    self.win.box()
-                    x = 4
-                    prompt = "Column to edit: "
-                    self.win.addstr(1, x, prompt)
-                    x += len(prompt)
-                    self.win.attroff(c.BRIGHT_YELLOW | c.BOLD)
-                    for i, question in enumerate(questions):
-
-                        self.win.attron(c.ORANGE | c.BOLD)
-                        prompt = f"{i+1}. "
-                        self.win.addstr(1, x, prompt)
-                        x += len(prompt)
-                        self.win.attroff(c.ORANGE | c.BOLD)
-
-                        self.win.attron(c.WHITE)
-                        prompt = f"{question} "
-                        self.win.addstr(1, x, prompt)
-                        x += len(prompt)
-                        self.win.attroff(c.WHITE)
-
-                    self.win.attron(c.WHITE)
-                    prompt = f" :  "
-                    self.win.addstr(1, x, prompt)
-                    x += len(prompt)
-                    self.win.attroff(c.WHITE)
-
-                    curses.echo()
-
-                    self.win.attron(c.WHITE)
-                    input = chr(self.win.getch(1, x))
-                    self.win.attroff(c.WHITE)
-
-                    selection = 0
-                    if input in ('1', '2', '3', '4', '5'):
-                        selection = int(input) - 1
-
-                    edit_card = windows[active_window].cards[active_card]
-                    existing_answers = [edit_card.name, edit_card.description, edit_card.path, edit_card.file, edit_card.language]
-                    self.win.erase()
-
-                    x = 4
-                    self.win.attron(c.BRIGHT_YELLOW | c.BOLD)
-                    self.win.box()
-                    prompt = f"Current value: "
-                    self.win.addstr(1, x, prompt)
-                    x += len(prompt)
-                    self.win.attroff(c.BRIGHT_YELLOW | c.BOLD)
-
-                    self.win.attron(c.WHITE)
-                    prompt = f"{existing_answers[selection]}  "
-                    self.win.addstr(1, x, prompt)
-                    x += len(prompt)
-                    self.win.attroff(c.WHITE)
-
-                    self.win.attron(c.BRIGHT_YELLOW | c.BOLD)
-                    prompt = f"New value: "
-                    self.win.addstr(1, x, prompt)
-                    x += len(prompt)
-                    self.win.attroff(c.BRIGHT_YELLOW | c.BOLD)
-
-                    self.win.attron(c.WHITE)
-                    input = self.win.getstr(1, x).decode("utf-8")
-                    self.win.attroff(c.WHITE)
-
-                    # self.cursor.execute(f"UPDATE projects SET {questions[selection].strip("*")} = ? WHERE name = ?", (input, edit_card.name,))
-                    # self.conn.commit()
-
-                    curses.noecho()
-                    self.draw_help()
-                    self.refresh()
-                    return
-                    # return ret
-                else:
-                    ret = []
-                    for question in questions:
-                        self.win.attron(c.BRIGHT_YELLOW | c.BOLD)
-                        self.win.addstr(1, 4, question + ": ")
-                        self.win.box()
-                        self.win.attroff(c.BRIGHT_YELLOW | c.BOLD)
-                        curses.echo()
-                        input = self.win.getstr(1, 4 + len(question) + 2).decode("utf-8")
-                        curses.noecho()
-                        ret.append(input)
-                        self.win.erase()
-                    self.draw_help()
-                    self.refresh()
-                    return ret
+    # def draw_help(self, getting_input=False, editting=False):
+    #     if getting_input:
+    #         questions = ["name*", "description", "path*", "file", "language"]
+    #         if editting:
+    #
+    #             self.win.attron(c.BRIGHT_YELLOW | c.BOLD)
+    #             self.win.box()
+    #             x = 4
+    #             prompt = "Column to edit: "
+    #             self.win.addstr(1, x, prompt)
+    #             x += len(prompt)
+    #             self.win.attroff(c.BRIGHT_YELLOW | c.BOLD)
+    #             for i, question in enumerate(questions):
+    #
+    #                 self.win.attron(c.ORANGE | c.BOLD)
+    #                 prompt = f"{i+1}. "
+    #                 self.win.addstr(1, x, prompt)
+    #                 x += len(prompt)
+    #                 self.win.attroff(c.ORANGE | c.BOLD)
+    #
+    #                 self.win.attron(c.WHITE)
+    #                 prompt = f"{question} "
+    #                 self.win.addstr(1, x, prompt)
+    #                 x += len(prompt)
+    #                 self.win.attroff(c.WHITE)
+    #
+    #             self.win.attron(c.WHITE)
+    #             prompt = f" :  "
+    #             self.win.addstr(1, x, prompt)
+    #             x += len(prompt)
+    #             self.win.attroff(c.WHITE)
+    #
+    #             curses.echo()
+    #
+    #             self.win.attron(c.WHITE)
+    #             input = chr(self.win.getch(1, x))
+    #             self.win.attroff(c.WHITE)
+    #
+    #             selection = 0
+    #             if input in ('1', '2', '3', '4', '5'):
+    #                 selection = int(input) - 1
+    #
+    #             edit_card = windows[active_window].cards[active_card]
+    #             existing_answers = [edit_card.name, edit_card.description, edit_card.path, edit_card.file, edit_card.language]
+    #             self.win.erase()
+    #
+    #             x = 4
+    #             self.win.attron(c.BRIGHT_YELLOW | c.BOLD)
+    #             self.win.box()
+    #             prompt = f"Current value: "
+    #             self.win.addstr(1, x, prompt)
+    #             x += len(prompt)
+    #             self.win.attroff(c.BRIGHT_YELLOW | c.BOLD)
+    #
+    #             self.win.attron(c.WHITE)
+    #             prompt = f"{existing_answers[selection]}  "
+    #             self.win.addstr(1, x, prompt)
+    #             x += len(prompt)
+    #             self.win.attroff(c.WHITE)
+    #
+    #             self.win.attron(c.BRIGHT_YELLOW | c.BOLD)
+    #             prompt = f"New value: "
+    #             self.win.addstr(1, x, prompt)
+    #             x += len(prompt)
+    #             self.win.attroff(c.BRIGHT_YELLOW | c.BOLD)
+    #
+    #             self.win.attron(c.WHITE)
+    #             input = self.win.getstr(1, x).decode("utf-8")
+    #             self.win.attroff(c.WHITE)
+    #
+    #             # self.cursor.execute(f"UPDATE projects SET {questions[selection].strip("*")} = ? WHERE name = ?", (input, edit_card.name,))
+    #             # self.conn.commit()
+    #
+    #             curses.noecho()
+    #             self.draw_help()
+    #             self.refresh()
+    #             return
+    #             # return ret
+    #         else:
+    #             ret = []
+    #             for question in questions:
+    #                 self.win.attron(c.BRIGHT_YELLOW | c.BOLD)
+    #                 self.win.addstr(1, 4, question + ": ")
+    #                 self.win.box()
+    #                 self.win.attroff(c.BRIGHT_YELLOW | c.BOLD)
+    #                 curses.echo()
+    #                 input = self.win.getstr(1, 4 + len(question) + 2).decode("utf-8")
+    #                 curses.noecho()
+    #                 ret.append(input)
+    #                 self.win.erase()
+    #             self.draw_help()
+    #             self.refresh()
+    #             return ret
+    #     pass
 
            
 
@@ -559,7 +569,7 @@ class Window:
 
         # TODO: only draw window once
         # draw this Window
-        self.draw(active_window_id)
+        self.draw_window(active_window_id)
 
         # TODO: only activate necessary cards (below active one)
         # draw all Cards
@@ -567,7 +577,7 @@ class Window:
             if self.id == active_window_id and i == active_card_index:
                 card.activate()
 
-            card.draw(self.card_offset, mode)
+            card.draw_card(self.card_offset, mode)
             self.card_offset += 3 if not card.active else 6
 
 
@@ -578,7 +588,7 @@ class Window:
             if card.name == name:
                 active_card = i
                 card.activate()
-                self.draw()
+                self.draw_window()
                 self.refresh()
 
     def add_project(self):
@@ -608,7 +618,7 @@ class Window:
         windows[active_window].refresh()
 
 
-    def draw(self, active_window_id):
+    def draw_window(self, active_window_id):
         style = self.color | c.BOLD if active_window_id == self.id else self.color
         draw_box(self.win, style)
         self.win.addstr(0, self.title_pos, f" {self.title} ({str(len(self.cards))}) ", (c.WHITE | c.BOLD if active_window_id == self.id else style))
@@ -649,7 +659,7 @@ class Card():
     def clear(self):
         self.win.erase()
 
-    def draw(self, y_offset, mode):
+    def draw_card(self, y_offset, mode):
         self.y += y_offset
         self.win.mvwin(self.y, self.x)
         # self.win.box()
@@ -738,11 +748,11 @@ def main(stdscr):
 
     todo_keymap = {
         "q":        lambda:   sm.close_todo(),
-        # "a":        lambda:   sm.tm.add_item(),
+        "a":        lambda:   sm.add_item(),
         "KEY_UP":   lambda:   sm.tm.up(),
         "KEY_DOWN": lambda:   sm.tm.down(),
-        # "d":        lambda:   sm.tm.delete_item(),
-        # "e":        lambda:   sm.tm.edit_item(),
+        "d":        lambda:   cw.delete_item(),
+        "e":        lambda:   cw.edit_item(),
     }
 
     keymap = {
