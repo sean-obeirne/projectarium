@@ -81,8 +81,8 @@ TODO_COLORS = [(NO_TODO_ITEMS, REGULAR, c.DIM_WHITE), (LOW_TODO_ITEMS, REGULAR, 
 color_code = lambda tc, s: [color for limit, shade, color in TODO_COLORS if tc <= limit and s == shade][0]
 
 
-MODES =             [BLAND := 0, COLORED := 1]
-COMMAND_STATES =    [ADD := 0,   DELETE := 1, EDIT := 2]
+MODES =             [BLAND := 0, COLORED := 1, DIM := 2]
+COMMAND_STATES =    [ADD := 0,   DELETE := 1,  EDIT := 2]
 
 # Global helper functions
 def draw_box(window, attributes):
@@ -126,6 +126,10 @@ class StateManager:
     def get_cards(self):
         return WINDOWS[self.active_window].cards
 
+    def set_mode(self, new_mode):
+        self.mode = new_mode
+        self.update_windows()
+
     def next_mode(self):
         self.mode = (self.mode + 1) % len(MODES)
         self.update_windows()
@@ -135,12 +139,15 @@ class StateManager:
             self.tm = TodoManager(self.active_window, active, self.dm.pull_todo_data(self.get_active_card().id))
             self.in_todo = True
             self.cw.help(self.active_window, active, self.in_todo)
-        self.update_windows(True)
+        self.set_mode(DIM)
+        self.update_windows()
+        self.tm.draw_tm()
 
     def close_todo(self):
         if self.tm: self.tm.close()
         self.update_windows()
         self.in_todo = False
+        self.set_mode(COLORED)
         self.cw.help(self.active_window, self.get_active_card() , self.in_todo)
 
     def up(self):
@@ -569,7 +576,7 @@ class Window:
 
         # TODO: only draw window once
         # draw this Window
-        self.draw_window(active_window_id)
+        self.draw_window(active_window_id, mode)
 
         # TODO: only activate necessary cards (below active one)
         # draw all Cards
@@ -618,9 +625,9 @@ class Window:
         windows[active_window].refresh()
 
 
-    def draw_window(self, active_window_id):
+    def draw_window(self, active_window_id, mode=0):
         style = self.color | c.BOLD if active_window_id == self.id else self.color
-        draw_box(self.win, style)
+        draw_box(self.win, (style if mode != DIM else c.DARK_GREY))
         self.win.addstr(0, self.title_pos, f" {self.title} ({str(len(self.cards))}) ", (c.WHITE | c.BOLD if active_window_id == self.id else style))
         # if self.id == HELP:
             # self.draw_help()
