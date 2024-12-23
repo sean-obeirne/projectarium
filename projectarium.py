@@ -95,9 +95,11 @@ class StateManager:
     def __init__(self, dm, cw):
         self.dm = dm
         self.cw = cw
+        self.tm = None
         self.active_window = 0
         self.active_card = -1
         self.mode = BLAND
+        self.in_todo = False
 
     def init(self):
         for window in WINDOWS:
@@ -105,23 +107,37 @@ class StateManager:
             if self.active_card == -1 and len(window.cards) > 0:
                 self.active_window = window.id
                 self.active_card = 0
-                WINDOWS[self.active_window].cards[self.active_card].activate()
+                self.get_active_card().activate()
                 break
         self.update_windows()
 
     def update_windows(self): # TODO: only update active window and new active window
         for window in WINDOWS:
             window.update(self.dm, self.active_window, self.active_card, self.mode)
-        self.cw.draw(self.active_window, self.active_card)
+        self.cw.draw(self.active_window, self.active_card, False)
 
     def update_window(self, window_id=None):
         window_id = self.active_window if window_id is None else window_id
         WINDOWS[window_id].update(self.dm, window_id, self.active_card)
 
+    def get_active_card(self):
+        return WINDOWS[self.active_window].cards[self.active_card]
+
+    def get_cards(self):
+        return WINDOWS[self.active_window].cards
 
     def next_mode(self):
         self.mode = (self.mode + 1) % len(MODES)
         self.update_windows()
+
+    def open_todo(self):
+        self.tm = TodoManager(self.active_window, self.get_active_card(), self.dm.pull_todo_data(self.get_active_card().id))
+        self.in_todo = True
+
+    def close_todo(self):
+        if self.tm: self.tm.close()
+        self.update_windows()
+        self.in_todo = False
 
     def up(self):
         if self.active_card > 0:
@@ -129,14 +145,14 @@ class StateManager:
             self.update_windows()
 
     def down(self):
-        if self.active_card < len(WINDOWS[self.active_window].cards) - 1:
+        if self.active_card < len(self.get_cards()) - 1:
             self.active_card += 1
             self.update_windows()
 
     def right(self):
         if self.active_window < 3:
             self.active_window += 1
-            self.active_card = min(self.active_card, max((length := len(WINDOWS[self.active_window].cards)) - 1, 0))
+            self.active_card = min(self.active_card, max(len(self.get_cards()) - 1, 0))
             self.update_windows()
             #TODO: get this to work
             # self.update_window()
@@ -146,8 +162,9 @@ class StateManager:
         if self.active_window > 0:
             self.active_window -= 1
             # self.active_card = min(self.active_card, len(WINDOWS[self.active_window].cards) - 1)
-            self.active_card = min(self.active_card, max((length := len(WINDOWS[self.active_window].cards)) - 1, 0))
+            self.active_card = min(self.active_card, max(len(self.get_cards()) - 1, 0))
             self.update_windows()
+
 
     def progress(self):
         card = WINDOWS[self.active_window].cards[self.active_card]
@@ -155,7 +172,7 @@ class StateManager:
         self.dm.progress(card.name, self.active_window)
         self.update_windows()
         self.up()
-        if len(WINDOWS[self.active_window].cards) == 0:
+        if len(self.get_cards()) == 0:
             self.right()
         
     def regress(self):
@@ -164,7 +181,7 @@ class StateManager:
         self.dm.regress(card.name, self.active_window)
         self.update_windows()
         self.up()
-        if len(WINDOWS[self.active_window].cards) == 0:
+        if len(self.get_cards()) == 0:
             self.left()
         
 
@@ -218,7 +235,7 @@ class DatabaseManager:
                     ("projectarium",    "Project progress tracker",     "/home/sean/code/active/python/projectarium/",      "projectarium.py",  "Active",       "Python"),
                     ("snr",             "Search and replace plugin",    "/home/sean/.config/nvim/lua/snr/",                 "init.lua",         "Active",       "Lua"),
                     ("todua",           "Todo list for Neovim",         "/home/sean/.config/nvim/lua/todua/",               "init.lua",         "Active",       "Lua"),
-                    ("macro-blues",     "Custom macropad firmware",     "/home/sean/code/active/c/macro-c.BLUEs/",            "macro-c.BLUEs",      "Active",       "C"),
+                    ("macro-blues",     "Custom macropad firmware",     "/home/sean/code/active/c/macro-c.BLUEs/",          "macro-c.BLUEs",      "Active",       "C"),
                     ("leetcode",        "Coding interview practice",    "/home/sean/code/paused/leetcode/",                 "",                 "Active",       "Python"),
                     ("TestTaker",       "ChatGPT->Python test maker",   "/home/sean/code/paused/TestTaker/",                "testtaker.py",     "Active",       "Python"),
                     ("Mission-Uplink",  "TFG Mission Uplink",           "/home/sean/code/tfg/Mission-Uplink/",              "README.md",        "Active",       "Go,C"),
@@ -252,6 +269,10 @@ class DatabaseManager:
         return [tuple(list(row) + [self.cursor.execute("SELECT COUNT(*) FROM todo WHERE project_id = ?;", (row[0],)).fetchone()[0]])
             for row in self.cursor.execute("SELECT * FROM projects WHERE status = ? ORDER BY LOWER(name);", (title,)).fetchall()]
 
+    def pull_todo_data(self, id):
+        return self.cursor.execute("SELECT * FROM todo WHERE project_id = ?", (id,)).fetchall()
+
+
     def progress(self, name, current_status):
         self.cursor.execute("UPDATE projects SET status = ? WHERE name = ?", (list(STATUSES.keys())[current_status + 1], name,))
         self.conn.commit()
@@ -259,6 +280,90 @@ class DatabaseManager:
     def regress(self, name, current_status):
         self.cursor.execute("UPDATE projects SET status = ? WHERE name = ?", (list(STATUSES.keys())[current_status - 1], name,))
         self.conn.commit()
+
+
+class TodoManager():
+    def __init__(self, active_window, card, todo_list):
+        if card.todo_count <= 0:
+            return
+
+        self.active_window = active_window
+        self.card = card
+        self.todo_list = todo_list
+
+        longest = max([len(item[1]) for item in self.todo_list])
+        self.h, self.w = self.card.todo_count + (4 * Y_PAD) + 1, longest + (4 * X_PAD) + 2
+        self.y, self.x = self.card.y, (card.x + SECTION_WIDTH - 1) if active_window < 2 else self.card.x - longest
+        self.win = curses.newwin(self.h, self.w, self.y, self.x)
+
+        self.selected_item = 0
+
+        self.draw()
+        pass
+
+    def init(self):
+        pass
+
+    def draw(self):
+        draw_box(self.win, c.PURPLE)
+        self.win.addstr(1, 2, "TODO:", c.WHITE | c.BOLD)
+        self.win.addstr(2, 2, "-----", c.WHITE | c.BOLD)
+        self.items = ["• " + item[1] for item in self.todo_list if item[3] == 0]
+        item_y =  3
+        for i, item in enumerate(self.items):
+            self.win.addstr(item_y, 4, item, c.INVERT if i == self.selected_item else c.WHITE)
+            item_y += 1
+        
+        self.win.refresh()
+
+    def close(self):
+        self.win.erase()
+        self.items = []
+        self.win.refresh()
+        
+    def down(self):
+        self.selected_item = min(self.selected_item + 1, self.card.todo_count - 1)
+        self.draw()
+            
+    def up(self):
+        self.selected_item = max(self.selected_item - 1, 0)
+        self.draw()
+
+    # def add_item(self):
+    #     new_item = windows[HELP].draw_help(getting_input=True)[0]
+    #     if self.todo_window:
+    #         self.cursor.execute("INSERT INTO todo (description, priority, deleted, project_id) VALUES (?, ?, ?, ?)", (new_item, 0, False, self.id))
+    #         self.conn.commit()
+    #         self.todo_count += 1
+    #         draw_windows() # TODO: basically eliminate this
+    #         self.refresh()
+    #         self.close_todo()
+    #         self.open_todo()
+    #
+    # 
+    #
+    # def delete_item(self):
+    #     if self.todo_count <= 0:
+    #         return
+    #     self.cursor.execute("DELETE FROM todo WHERE description = ?", (self.items[self.selected_item][1],))
+    #     self.conn.commit()
+    #     self.todo_count -= 1
+    #     if self.selected_item > 0:
+    #         self.selected_item -= 1
+    #     self.close_todo()
+    #     self.open_todo()
+    #     pass
+    #
+    # def edit_item(self, ):
+    #     if self.todo_count <= 0:
+    #         return
+    #     item_text = windows[HELP].draw_help(getting_input=True, editting=True)[0]
+    #     self.cursor.execute("UPDATE todo SET description = ? WHERE description = ?", (item_text, self.items[self.selected_item][1],))
+    #     self.conn.commit()
+    #     self.refresh()
+    #     self.close_todo()
+    #     self.open_todo()
+
 
 
 # in_todo = False
@@ -281,27 +386,29 @@ class CommandWindow:
     def init(self):
         self.state = HELP
 
-    def draw(self, active_window, active_card):
-        self.win.erase()
-        y = Y_PAD
-        x = X_PAD * 2
-        if self.state == HELP:
-            for string in ["add", "delete", "edit", "cd", "nvim", "todo", "progress", "regress", "mode", "quit"]:
-                self.win.addstr(y, x, f"{string[0]}: ", c.CYAN)
-                x += 3
-                if (active_window == 0 and string == "regress") \
-                    or (active_window == 3 and string == "progress") \
-                    or (WINDOWS[active_window].cards[active_card].file in (None, "") and string == "nvim") \
-                    or (WINDOWS[active_window].cards[active_card].path == "" and string == "cd") \
-                    or (WINDOWS[active_window].cards[active_card].description in(None, "") and string == "description"):
-                    color = c.DARK_GREY
-                else:
-                    color = c.WHITE
-                self.win.addstr(y, x, f"{string}", color)
-                x += len(string) + 5
-
-        draw_box(self.win, c.WHITE)
-        self.win.refresh()
+    def draw(self, active_window, active_card, in_todo):
+        # self.win.erase()
+        # y = Y_PAD
+        # x = X_PAD * 2
+        # if self.state == HELP:
+        #     commands = ["add", "delete", "edit", "quit"] if in_todo else ["add", "delete", "edit", "cd", "nvim", "todo", "progress", "regress", "mode", "quit"]
+        #     for string in commands:
+        #         self.win.addstr(y, x, f"{string[0]}: ", c.CYAN)
+        #         x += 3
+        #         if (active_window == 0 and string == "regress") \
+        #             or (active_window == 3 and string == "progress") \
+        #             or (WINDOWS[active_window].cards[active_card].file in (None, "") and string == "nvim") \
+        #             or (WINDOWS[active_window].cards[active_card].path == "" and string == "cd") \
+        #             or (WINDOWS[active_window].cards[active_card].description in(None, "") and string == "description"):
+        #             color = c.DARK_GREY
+        #         else:
+        #             color = c.WHITE
+        #         self.win.addstr(y, x, f"{string}", color)
+        #         x += len(string) + 5
+        #
+        # draw_box(self.win, c.WHITE)
+        # self.win.refresh()
+        pass
 
 
 
@@ -322,7 +429,6 @@ class CommandWindow:
         #         self.draw_help(False)
         #         return [input]
         #     else:
-        #         strings = ["add", "delete", "edit", "quit"]
             if getting_input:
                 questions = ["name*", "description", "path*", "file", "language"]
                 if editting:
@@ -544,7 +650,8 @@ class Card():
         self.win.erase()
 
     def draw(self, y_offset, mode):
-        self.win.mvwin(self.y + y_offset, self.x)
+        self.y += y_offset
+        self.win.mvwin(self.y, self.x)
         # self.win.box()
 
         self.win.addstr(Y_PAD, X_PAD, self.name, self.text_color | c.BOLD)
@@ -556,9 +663,9 @@ class Card():
         if self.active:
             draw_box(self.win, regular)
             self.draw_name_border(regular)
-            self.win.addstr(self.y + 2, (self.w // 2) - (len(self.description) // 2), f"{self.description}", c.WHITE)  # description
-            self.win.addstr(self.y + 3, self.w - len("items: ") - 2 - len(str(self.todo_count)), "items: ")                                         # 'items: '
-            self.win.addstr(self.y + 3, self.w - len(str(self.todo_count)) - 2, f"{self.todo_count}", color_code(self.todo_count, REGULAR))                  # todo count
+            self.win.addstr(3, (self.w // 2) - (len(self.description) // 2), f"{self.description}", c.WHITE)  # description
+            self.win.addstr(4, self.w - len("items: ") - 2 - len(str(self.todo_count)), "items: ")                                         # 'items: '
+            self.win.addstr(4, self.w - len(str(self.todo_count)) - 2, f"{self.todo_count}", color_code(self.todo_count, REGULAR))                  # todo count
         else:
             draw_box(self.win, dark)
 
@@ -572,10 +679,6 @@ class Card():
         self.active = False
         self.win.resize(INACTIVE_CARD_HEIGHT, self.w)
 
-    def shove(self, force=False):
-        if not self.is_shoved or force:
-            self.win.mvwin(self.y + 4, self.x)
-
     def draw_name_border(self, attributes):
         if self.active:
             self.win.attron(attributes)
@@ -587,120 +690,7 @@ class Card():
             self.win.attroff(attributes)
 
 
-    def unshove(self):
-        if self.is_shoved:
-            self.win.mvwin(self.y + 1, self.x)
-
-    def open_todo(self):
-        # global in_todo
-        in_todo = True
-        
-        self.win.attron(c.PURPLE)
-        self.win.box()
-        self.draw_name_border(c.WHITE)
-        self.win.attroff(c.PURPLE)
-        self.win.refresh()
-
-        windows[HELP].draw_help()
-        windows[HELP].refresh()
-        
-        self.items = []
-        longest_item = 37
-        self.cursor.execute("SELECT * FROM todo WHERE project_id = ?", (self.id,))
-        # id, description, priority, deleted, project_id
-        rows = self.cursor.fetchall()
-        for row in rows:
-            if row[3] != True: # deleted
-                self.items.append((row[0], row[1]))
-                longest_item = max(len(row[1]) + 4 + 2 + 5, longest_item)
-
-        h, w = min(len(rows) + 3 + 2, windows[active_window].h), longest_item
-        # y, x = 2, stdscr.getmaxyx()[1] // 2 - (w // 2)
-        y, x = windows[active_window].cards[active_card].y + 1 , self.x + 35 if active_window < ACTIVE else self.x - 39
-        self.todo_window = curses.newwin(h, w, y, x)
-        self.todo_window.attron(c.PURPLE | c.BOLD)
-        self.todo_window.box()
-        self.todo_window.attroff(c.PURPLE)
-        self.todo_window.attron(c.WHITE)
-        self.todo_window.addstr(1, 2, "TODO:")
-        self.todo_window.attroff(c.WHITE | c.BOLD)
-
-        item_y = 3
-        for i, item in enumerate(self.items):
-            if i == self.selected_item:
-                self.todo_window.attron(c.INVERT)
-            else:
-                self.todo_window.attron(c.WHITE)
-
-            self.todo_window.addstr(item_y, 4, "• " + item[1])
-            item_y += 1
-            if i == self.selected_item:
-                self.todo_window.attroff(c.INVERT)
-            else:
-                self.todo_window.attroff(c.WHITE)
-        self.todo_window.attroff(c.WHITE | c.BOLD)
-        # self.todo_count = len(rows)
-        # self.todo_window.addstr(0, self.title_pos, f" {self.title}{" (" + str(len(self.cards)) + ") " if self.id not in (FRAME, HELP) else " "}" if self.title != "" else "")
-        self.todo_window.refresh()
-        # cursor.execute('''
-        # ''')
-
-    def close_todo(self):
-        global in_todo
-        in_todo = False
-        if self.todo_window:
-            self.todo_window.clear()
-            self.todo_window = None
-            self.items = []
-        draw_windows()
-
-    def add_item(self):
-        new_item = windows[HELP].draw_help(getting_input=True)[0]
-        if self.todo_window:
-            self.cursor.execute("INSERT INTO todo (description, priority, deleted, project_id) VALUES (?, ?, ?, ?)", (new_item, 0, False, self.id))
-            self.conn.commit()
-            self.todo_count += 1
-            draw_windows() # TODO: basically eliminate this
-            self.refresh()
-            self.close_todo()
-            self.open_todo()
-
-    def down(self):
-        if self.todo_window and self.selected_item < self.todo_count - 1:
-            self.selected_item += 1
-            self.refresh()
-            self.close_todo()
-            self.open_todo()
-            
-
-    def up(self):
-        if self.todo_window and self.selected_item > 0:
-            self.selected_item -= 1
-            self.refresh()
-            self.close_todo()
-            self.open_todo()
-
-    def delete_item(self):
-        if self.todo_count <= 0:
-            return
-        self.cursor.execute("DELETE FROM todo WHERE description = ?", (self.items[self.selected_item][1],))
-        self.conn.commit()
-        self.todo_count -= 1
-        if self.selected_item > 0:
-            self.selected_item -= 1
-        self.close_todo()
-        self.open_todo()
-        pass
-
-    def edit_item(self, ):
-        if self.todo_count <= 0:
-            return
-        item_text = windows[HELP].draw_help(getting_input=True, editting=True)[0]
-        self.cursor.execute("UPDATE todo SET description = ? WHERE description = ?", (item_text, self.items[self.selected_item][1],))
-        self.conn.commit()
-        self.refresh()
-        self.close_todo()
-        self.open_todo()
+    
 
 
 
@@ -746,38 +736,35 @@ def init():
 def main(stdscr):
     sm, dm, cw = init()
 
-
     todo_keymap = {
-        "q": lambda: windows[active_window].cards[active_card].close_todo(),
-
-        "a": lambda: windows[active_window].cards[active_card].add_item(),
-
-        "KEY_UP": lambda: windows[active_window].cards[active_card].up(),
-        "KEY_DOWN": lambda: windows[active_window].cards[active_card].down(),
-        "d": lambda: windows[active_window].cards[active_card].delete_item(),
-        "e": lambda: windows[active_window].cards[active_card].edit_item(),
+        "q":        lambda:   sm.close_todo(),
+        # "a":        lambda:   sm.tm.add_item(),
+        "KEY_UP":   lambda:   sm.tm.up(),
+        "KEY_DOWN": lambda:   sm.tm.down(),
+        # "d":        lambda:   sm.tm.delete_item(),
+        # "e":        lambda:   sm.tm.edit_item(),
     }
 
     keymap = {
-        "q": lambda: exit(0),
+        "q":    lambda: exit(0),
         "\x1b": lambda: exit(0),
 
-        "a": lambda:  windows[HELP].add_project(),
-        "d": lambda:  windows[HELP].delete_project(),
-        "e": lambda:  windows[HELP].edit_project(),
+        "a": lambda:  cw.add_project(),
+        "d": lambda:  cw.delete_project(),
+        "e": lambda:  cw.edit_project(),
 
-        "c": lambda: os.system(TERMINAL_PREFIX + windows[active_window].cards[active_card].path),
-        "n": lambda: os.system(TERMINAL_PREFIX + windows[active_window].cards[active_card].path + " -- bash -c \'" +  NEOVIM_PREFIX + windows[active_window].cards[active_card].file + "\'") if windows[active_window].cards[active_card].file != "" else "",
-        "t": lambda: windows[active_window].cards[active_card].open_todo(),
-        "p": lambda: sm.progress(),
-        "r": lambda: sm.regress(),
+        "c": lambda:  os.system(TERMINAL_PREFIX + card.path),
+        "n": lambda:  os.system(TERMINAL_PREFIX + card.path + " -- bash -c \'" +  NEOVIM_PREFIX + card.file + "\'") if card.file != "" else "",
+        "t": lambda:  sm.open_todo(),
+        "p": lambda:  sm.progress(),
+        "r": lambda:  sm.regress(),
 
-        "KEY_LEFT": lambda: sm.left(),
-        "KEY_RIGHT": lambda: sm.right(),
-        "KEY_UP": lambda: sm.up(),
-        "KEY_DOWN": lambda: sm.down(),
+        "KEY_LEFT":   lambda:  sm.left(),
+        "KEY_RIGHT":  lambda:  sm.right(),
+        "KEY_UP":     lambda:  sm.up(),
+        "KEY_DOWN":   lambda:  sm.down(),
 
-        "m": lambda: sm.next_mode(),
+        "m": lambda:  sm.next_mode(),
 
         # "": lambda: ,
     }
@@ -786,12 +773,12 @@ def main(stdscr):
     while True:
         # get and handle input
         key = stdscr.getkey()
-        # if in_todo:
-        #     if key not in todo_keymap: continue
-        #     todo_keymap[key]()
-        # else: 
-        if key not in keymap: continue
-        keymap[key]()
+        if sm.in_todo:
+            if key not in todo_keymap: continue
+            todo_keymap[key]()
+        else: 
+            if key not in keymap: continue
+            keymap[key]()
 
 
 if __name__ == "__main__":
