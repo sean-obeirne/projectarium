@@ -99,7 +99,7 @@ class StateManager:
         self.tm = None
         self.active_window = 0
         self.active_card = -1
-        self.mode = BLAND
+        self.mode = COLORED
         self.in_todo = False
 
     def init(self):
@@ -129,6 +129,16 @@ class StateManager:
             return WINDOWS[self.active_window].cards[self.active_card]
         else:
             return Card(-1, 0, 0, 0, 0, "", "", "", "", "") # dummy card to fool linter
+
+    def open_dir(self):
+        os.system(TERMINAL_PREFIX + self.get_active_card().path)
+
+    def open_nvim(self):
+          os.system(TERMINAL_PREFIX + self.get_active_card().path + " -- bash -c \'" +  NEOVIM_PREFIX + self.get_active_card().file + "\'") if self.get_active_card().file != "" else "",
+
+    def open_both(self):
+        self.open_dir()
+        self.open_nvim()
 
     def set_mode(self, new_mode):
         self.mode = new_mode
@@ -447,7 +457,7 @@ class CommandWindow:
         self.win.erase()
         y = Y_PAD
         x = X_PAD * 2
-        commands = ["add", "delete", "edit", "quit"] if in_todo else ["add", "delete", "edit", "cd", "nvim", "todo", "progress", "regress", "mode", "quit"]
+        commands = ["add", "delete", "edit", "quit"] if in_todo else ["add", "delete", "edit", "cd", "nvim", "both", "todo", "progress", "regress", "mode", "quit"]
         for string in commands:
             self.win.addstr(y, x, f"{string[0]}: ", c.CYAN)
             x += 3
@@ -733,8 +743,9 @@ def main(stdscr):
         "d": lambda:  sm.delete_project(),
         "e": lambda:  sm.edit_project(),
 
-        "c": lambda:  os.system(TERMINAL_PREFIX + sm.get_active_card().path),
-        "n": lambda:  os.system(TERMINAL_PREFIX + sm.get_active_card().path + " -- bash -c \'" +  NEOVIM_PREFIX + sm.get_active_card().file + "\'") if sm.get_active_card().file != "" else "",
+        "c": lambda:  sm.open_dir(),
+        "n": lambda:  sm.open_nvim(),
+        "b": lambda:  sm.open_both(),
         "t": lambda:  sm.open_todo(),
         "p": lambda:  sm.progress(),
         "r": lambda:  sm.regress(),
