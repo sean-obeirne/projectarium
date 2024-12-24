@@ -84,7 +84,7 @@ color_code = lambda tc, s: [color for limit, shade, color in TODO_COLORS if tc <
 MODES               =  [BLAND := 0, COLORED := 1, DIM := 2]
 
 COMMAND_STATES      =  [ADD := 0,   DELETE := 1,  EDIT := 2, SELECT := 3]
-EDIT_CARD_CHOICES   =  ["name", "description", "path", "file", "language"]
+EDIT_PROJECT_CHOICES   =  ["name", "description", "path", "file", "language"]
 
 # Global helper functions
 def draw_box(window, attributes):
@@ -122,11 +122,14 @@ class StateManager:
         window_id = self.active_window if window_id is None else window_id
         WINDOWS[window_id].update(self.dm, window_id, self.active_card)
 
-    def get_active_card(self):
-        return WINDOWS[self.active_window].cards[self.active_card]
-
     def get_cards(self):
         return WINDOWS[self.active_window].cards
+
+    def get_active_card(self):
+        if len(self.get_cards()) > 0:
+            return WINDOWS[self.active_window].cards[self.active_card]
+        else:
+            return Card(-1, 0, 0, 0, 0, "", "", "", "", "") # dummy card to fool linter
 
     def set_mode(self, new_mode):
         self.mode = new_mode
@@ -216,10 +219,25 @@ class StateManager:
             self.update_windows()
             self.tm.draw_tm()
 
-    def edit_card(self):
-        field = self.cw.make_selection("Attribute")
+    def add_project(self):
+        name = self.cw.get_input("Name", ADD, "")
+        description = self.cw.get_input("Description", ADD, "")
+        path = self.cw.get_input("Path", ADD, "")
+        file = self.cw.get_input("File", ADD, "")
+        language = self.cw.get_input("Language", ADD, "")
+        self.dm.add_project(name, description, path, file, "Backlog", language)
+        self.update_windows()
+
+    def edit_project(self):
+        field = self.cw.make_selection("Attribute", EDIT_PROJECT_CHOICES)
         new_val = self.cw.get_input(field, EDIT, self.dm.get_card_data(field, self.get_active_card().id)[0])
-        self.dm.edit_card(field, new_val, self.get_active_card().id)
+        self.dm.edit_project(field, new_val, self.get_active_card().id)
+        self.update_windows()
+
+    def delete_project(self):
+        if self.cw.make_selection("Delete?", ["Yes", "No"], "No") == "Yes":
+            self.dm.delete_project(self.get_active_card().id)
+            self.up()
         self.update_windows()
 
 
@@ -321,7 +339,16 @@ class DatabaseManager:
         self.cursor.execute("UPDATE projects SET status = ? WHERE name = ?", (list(STATUSES.keys())[current_status - 1], name,))
         self.conn.commit()
 
-    def edit_card(self, new_value_column, new_value, card_id):
+    def add_project(self, name, description, path, file, status, language):
+        self.cursor.execute(f"INSERT INTO projects (name, description, path, file, status, language) \
+            VALUES (?, ?, ?, ?, ?, ?)", (name, description, path, file, status, language ))
+        self.conn.commit()
+
+    def delete_project(self, card_id):
+        self.cursor.execute(f"DELETE FROM projects WHERE id = ?", (card_id,))
+        self.conn.commit()
+
+    def edit_project(self, new_value_column, new_value, card_id):
         self.cursor.execute(f"UPDATE projects SET {new_value_column} = ? WHERE id = ?", (new_value, card_id,))
         self.conn.commit()
 
@@ -433,7 +460,7 @@ class CommandWindow:
             self.win.addstr(y, x, f"{string[0]}: ", c.CYAN)
             x += 3
             color = c.WHITE
-            if not in_todo and \
+            if not in_todo and active_card is not None and \
                 ((active_window_index == ABANDONED and string == "regress") \
                 or (active_window_index == DONE and string == "progress") \
                 or (active_card.file in (None, "") and string == "nvim") \
@@ -450,21 +477,21 @@ class CommandWindow:
         draw_box(self.win, c.WHITE)
         self.win.refresh()
 
-    def make_selection(self, message, default=0):
+    def make_selection(self, message, choices, default=0):
         y = 1
         x = self.show_message(message, SELECT) + 3
-        for i in range(len(EDIT_CARD_CHOICES)):
+        for i in range(len(choices)):
             self.win.addstr(y, x, f"{i}", c.CYAN)
             x += 1
-            self.win.addstr(y, x, f": {EDIT_CARD_CHOICES[i]}", c.WHITE)
-            x += len(EDIT_CARD_CHOICES[i]) + 2 + 3
+            self.win.addstr(y, x, f": {choices[i]}", c.WHITE)
+            x += len(choices[i]) + 2 + 3
         selected_number = -1
-        while selected_number not in range(0, len(EDIT_CARD_CHOICES)):
+        while selected_number not in range(0, len(choices)):
             try:
                 selected_number = int(chr(self.win.getch()))
             except ValueError:
                 selected_number = -1
-        return EDIT_CARD_CHOICES[selected_number]
+        return choices[selected_number]
 
     def show_message(self, message, state):
         self.win.erase()
@@ -858,12 +885,12 @@ def main(stdscr):
         "q":    lambda: exit(0),
         "\x1b": lambda: exit(0),
 
-        "a": lambda:  cw.add_project(),
-        "d": lambda:  cw.delete_project(),
-        "e": lambda:  sm.edit_card(),
+        "a": lambda:  sm.add_project(),
+        "d": lambda:  sm.delete_project(),
+        "e": lambda:  sm.edit_project(),
 
-        "c": lambda:  os.system(TERMINAL_PREFIX + card.path),
-        "n": lambda:  os.system(TERMINAL_PREFIX + card.path + " -- bash -c \'" +  NEOVIM_PREFIX + card.file + "\'") if card.file != "" else "",
+        "c": lambda:  os.system(TERMINAL_PREFIX + sm.get_active_card().path),
+        "n": lambda:  os.system(TERMINAL_PREFIX + sm.get_active_card().path + " -- bash -c \'" +  NEOVIM_PREFIX + sm.get_active_card().file + "\'") if sm.get_active_card().file != "" else "",
         "t": lambda:  sm.open_todo(),
         "p": lambda:  sm.progress(),
         "r": lambda:  sm.regress(),
