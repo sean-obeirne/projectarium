@@ -81,8 +81,10 @@ TODO_COLORS = [(NO_TODO_ITEMS, REGULAR, c.DIM_WHITE), (LOW_TODO_ITEMS, REGULAR, 
 color_code = lambda tc, s: [color for limit, shade, color in TODO_COLORS if tc <= limit and s == shade][0]
 
 
-MODES =             [BLAND := 0, COLORED := 1, DIM := 2]
-COMMAND_STATES =    [ADD := 0,   DELETE := 1,  EDIT := 2]
+MODES               =  [BLAND := 0, COLORED := 1, DIM := 2]
+
+COMMAND_STATES      =  [ADD := 0,   DELETE := 1,  EDIT := 2, SELECT := 3]
+EDIT_CARD_CHOICES   =  ["name", "description", "path", "file", "language"]
 
 # Global helper functions
 def draw_box(window, attributes):
@@ -131,14 +133,13 @@ class StateManager:
         self.update_windows()
 
     def next_mode(self):
-        self.mode = (self.mode + 1) % len(MODES)
+        self.mode = (self.mode + (2 if self.mode == 1 else 1)) % len(MODES)
         self.update_windows()
 
     def open_todo(self):
-        if (active := self.get_active_card()).todo_count > 0:
-            self.tm = TodoManager(self.active_window, active, self.dm.pull_todo_data(self.get_active_card().id))
-            self.in_todo = True
-            self.cw.help(self.active_window, active, self.in_todo)
+        self.tm = TodoManager(self.active_window, self.get_active_card(), self.dm.pull_todo_data(self.get_active_card().id))
+        self.in_todo = True
+        self.cw.help(self.active_window, self.get_active_card(), self.in_todo)
         self.set_mode(DIM)
         self.update_windows()
         self.tm.draw_tm()
@@ -197,10 +198,29 @@ class StateManager:
         
     def add_item(self):
         if self.tm:
-            log.info("GO FUC YOURSELF")
-            self.tm.update(self.dm.add_item(self.cw.get_input("add todo item: ", ADD, ""), self.get_active_card().id))
-            # self.get_active_card().todo_count += 1
+            self.tm.update_tm(self.dm.add_item(self.cw.get_input("New todo item", ADD, ""), self.get_active_card().id))
+            self.update_windows()
+            self.tm.draw_tm()
 
+    def edit_item(self):
+        if self.tm and self.get_active_card().todo_count > 0:
+            new_description = self.cw.get_input("Description", EDIT, self.tm.todo_list[self.tm.selected_item][1])
+            todo_id = self.tm.todo_list[self.tm.selected_item][0]
+            self.tm.update_tm(self.dm.edit_item(todo_id, new_description, self.get_active_card().id))
+            self.update_windows()
+            self.tm.draw_tm()
+
+    def delete_item(self):
+        if self.tm and self.get_active_card().todo_count > 0:
+            self.tm.update_tm(self.dm.delete_item(self.tm.todo_list[self.tm.selected_item][0], self.get_active_card().id))
+            self.update_windows()
+            self.tm.draw_tm()
+
+    def edit_card(self):
+        field = self.cw.make_selection("Attribute")
+        new_val = self.cw.get_input(field, EDIT, self.dm.get_card_data(field, self.get_active_card().id)[0])
+        self.dm.edit_card(field, new_val, self.get_active_card().id)
+        self.update_windows()
 
 
 
@@ -284,12 +304,14 @@ class DatabaseManager:
 
     def pull_card_data(self, title):
         # get cards, then append to the end of the query result the number of tasks the card has
-        return [tuple(list(row) + [self.cursor.execute("SELECT COUNT(*) FROM todo WHERE project_id = ?;", (row[0],)).fetchone()[0]])
+        return [tuple(list(row) + [self.cursor.execute("SELECT COUNT(*) FROM todo WHERE project_id = ? AND deleted = ?;", (row[0], 0,)).fetchone()[0]])
             for row in self.cursor.execute("SELECT * FROM projects WHERE status = ? ORDER BY LOWER(name);", (title,)).fetchall()]
 
     def pull_todo_data(self, id):
-        return self.cursor.execute("SELECT * FROM todo WHERE project_id = ?", (id,)).fetchall()
+        return self.cursor.execute("SELECT * FROM todo WHERE project_id = ? and deleted = ?", (id, 0)).fetchall()
 
+    def get_card_data(self, column, card_id):
+        return self.cursor.execute(f"SELECT {column} FROM projects WHERE id = ?", (card_id,)).fetchone()
 
     def progress(self, name, current_status):
         self.cursor.execute("UPDATE projects SET status = ? WHERE name = ?", (list(STATUSES.keys())[current_status + 1], name,))
@@ -299,33 +321,47 @@ class DatabaseManager:
         self.cursor.execute("UPDATE projects SET status = ? WHERE name = ?", (list(STATUSES.keys())[current_status - 1], name,))
         self.conn.commit()
 
-    def add_item(self, new_item, id):
-        self.cursor.execute("INSERT INTO todo (description, priority, deleted, project_id) VALUES (?, ?, ?, ?)", (new_item, 0, False, id))
+    def edit_card(self, new_value_column, new_value, card_id):
+        self.cursor.execute(f"UPDATE projects SET {new_value_column} = ? WHERE id = ?", (new_value, card_id,))
         self.conn.commit()
-        return self.pull_todo_data(id)
+
+    def add_item(self, new_item, card_id):
+        self.cursor.execute("INSERT INTO todo (description, priority, deleted, project_id) VALUES (?, ?, ?, ?)", (new_item, 0, False, card_id))
+        self.conn.commit()
+        return self.pull_todo_data(card_id)
+
+    def edit_item(self, item_id, new_description, card_id):
+        self.cursor.execute("UPDATE todo SET description = ? WHERE id = ? AND project_id = ?", (new_description, item_id, card_id,))
+        self.conn.commit()
+        return self.pull_todo_data(card_id)
+
+    def delete_item(self, item_id, card_id):
+        self.cursor.execute("UPDATE todo SET deleted = ? WHERE id = ?", (1, item_id,))
+        self.conn.commit()
+        return self.pull_todo_data(card_id)
 
 
 
 class TodoManager():
     def __init__(self, active_window, card, todo_list):
-        if card.todo_count <= 0:
-            return
-
         self.active_window = active_window
         self.card = card
         self.todo_list = todo_list
 
-
+        self.win = None
         self.selected_item = 0
 
         self.draw_tm()
-        pass
 
     def init(self):
         pass
 
     def draw_tm(self):
-        longest = max([len(item[1]) for item in self.todo_list])
+        if self.win:
+            self.win.erase()
+            self.win.refresh()
+
+        longest = max([len(item[1]) for item in self.todo_list]) if len(self.todo_list) > 0 else 20
         self.h, self.w = self.card.todo_count + (4 * Y_PAD) + 1, longest + (4 * X_PAD) + 2
         self.y, self.x = self.card.y, (self.card.x + SECTION_WIDTH - 1) if self.active_window < 2 else self.card.x - longest
         self.win = curses.newwin(self.h, self.w, self.y, self.x)
@@ -354,26 +390,12 @@ class TodoManager():
         self.selected_item = max(self.selected_item - 1, 0)
         self.draw_tm()
 
-    def update(self, new_list):
+    def update_tm(self, new_list):
         self.todo_list = new_list
-        self.card.todo_count += 1
-        self.draw_tm()
+        self.card.todo_count = len(new_list)
+        if self.selected_item >= self.card.todo_count:
+            self.up()
 
-    #
-    # 
-    #
-    # def delete_item(self):
-    #     if self.todo_count <= 0:
-    #         return
-    #     self.cursor.execute("DELETE FROM todo WHERE description = ?", (self.items[self.selected_item][1],))
-    #     self.conn.commit()
-    #     self.todo_count -= 1
-    #     if self.selected_item > 0:
-    #         self.selected_item -= 1
-    #     self.close_todo()
-    #     self.open_todo()
-    #     pass
-    #
     # def edit_item(self, ):
     #     if self.todo_count <= 0:
     #         return
@@ -384,9 +406,6 @@ class TodoManager():
     #     self.close_todo()
     #     self.open_todo()
 
-
-
-# in_todo = False
 
 
 class CommandWindow:
@@ -431,16 +450,93 @@ class CommandWindow:
         draw_box(self.win, c.WHITE)
         self.win.refresh()
 
-    def get_input(self, message, state, default=""):
-        self.win.addstr(1, (1 * X_PAD), message, c.BRIGHT_YELLOW | c.BOLD)
-        if default != "":
-            self.win.addstr(1, (1 * X_PAD) + len(message), f"({default})", c.BRIGHT_YELLOW)
+    def make_selection(self, message, default=0):
+        y = 1
+        x = self.show_message(message, SELECT) + 3
+        for i in range(len(EDIT_CARD_CHOICES)):
+            self.win.addstr(y, x, f"{i}", c.CYAN)
+            x += 1
+            self.win.addstr(y, x, f": {EDIT_CARD_CHOICES[i]}", c.WHITE)
+            x += len(EDIT_CARD_CHOICES[i]) + 2 + 3
+        selected_number = -1
+        while selected_number not in range(0, len(EDIT_CARD_CHOICES)):
+            try:
+                selected_number = int(chr(self.win.getch()))
+            except ValueError:
+                selected_number = -1
+        return EDIT_CARD_CHOICES[selected_number]
+
+    def show_message(self, message, state):
+        self.win.erase()
+        message = message.strip()
+        states = ["Adding:", "Changing:", "Deleting:", "Selecting:"]
+        mlen = max(len(message) + 3 + 4, len(states[state]))
+
         draw_box(self.win, c.WHITE)
 
+        message_prompt = f"  {message}    "
+        self.win.addstr(1, (1 * X_PAD), message_prompt, c.BRIGHT_YELLOW | c.BOLD)
+
+
+        self.win.addstr(0, 1, states[state])
+        self.win.addch(0, mlen, '┬', c.WHITE)
+        self.win.addch(1, mlen, '│', c.WHITE)
+        self.win.addch(2, mlen, '┴', c.WHITE)
+        return mlen
+
+
+
+    def get_input(self, message, state, default="", placeholder_len=0):
+        default = default.strip()
+        self.win.erase()
+        self.win.refresh()
+        mlen = self.show_message(message, state)
+        if default != "":
+            dlen = max(len("Default: "), len(default) + 3 + 4 + 2)
+            self.win.addstr(0, mlen + 1, "Default:")
+            self.win.addch(0, mlen + dlen, '┬', c.WHITE)
+            self.win.addch(1, mlen + dlen, '│', c.WHITE)
+            self.win.addch(2, mlen + dlen, '┴', c.WHITE)
+            default_prompt = f"   \"{default}\"  "
+            self.win.addstr(1, mlen + 1, default_prompt, c.BRIGHT_YELLOW | c.BOLD)
+        else:
+            dlen = 0
+
         curses.echo()
-        input = self.win.getstr(1, (1 * X_PAD) + len(message)).decode("utf-8")
+        curses.curs_set(1)
+
+        input_pos = (1 * X_PAD) + mlen + dlen + 3
+        input, i = [], -1
+        self.win.keypad(True)
+        while (key := self.win.getch(1, input_pos + i)):
+            if key in (10, 13):
+                break
+            elif key == 27:
+                input.clear()
+                break
+            elif key == curses.KEY_BACKSPACE:
+                if len(input) > 0:
+                    input.pop(i)
+                    i -= 1
+                self.win.addstr(1, input_pos + i, ('_' if placeholder_len > 0 else ' '))
+                self.win.move(1, input_pos + i - 1)
+                self.win.refresh()
+                continue
+            # elif key == curses.KEY_LEFT:
+            #     i -= 1
+            #     self.win.move(1, input_pos + i - 1)
+            #     self.win.refresh()
+            #     continue
+            input.append(chr(key))
+            i += 1
+
+        finput = "".join(input)
+            
+        curses.curs_set(0)
         curses.noecho()
-        return default if input == "" else input
+
+
+        return default if finput == "" else finput
         
 
 
@@ -701,14 +797,10 @@ class Card():
             self.win.attron(attributes)
             self.win.addch(2, 0, '├')
             self.win.addch(0, len(self.name) + 3, '┬')
-            self.win.addch(2, len(self.name) + 3, '┘')
             self.win.addch(1, len(self.name) + 3, '│')
+            self.win.addch(2, len(self.name) + 3, '┘')
             self.win.addstr(2, 1, '─' * (len(self.name) + 2))
             self.win.attroff(attributes)
-
-
-    
-
 
 
 def init():
@@ -758,8 +850,8 @@ def main(stdscr):
         "a":        lambda:   sm.add_item(),
         "KEY_UP":   lambda:   sm.tm.up(),
         "KEY_DOWN": lambda:   sm.tm.down(),
-        "d":        lambda:   cw.delete_item(),
-        "e":        lambda:   cw.edit_item(),
+        "d":        lambda:   sm.delete_item(),
+        "e":        lambda:   sm.edit_item(),
     }
 
     keymap = {
@@ -768,7 +860,7 @@ def main(stdscr):
 
         "a": lambda:  cw.add_project(),
         "d": lambda:  cw.delete_project(),
-        "e": lambda:  cw.edit_project(),
+        "e": lambda:  sm.edit_card(),
 
         "c": lambda:  os.system(TERMINAL_PREFIX + card.path),
         "n": lambda:  os.system(TERMINAL_PREFIX + card.path + " -- bash -c \'" +  NEOVIM_PREFIX + card.file + "\'") if card.file != "" else "",
