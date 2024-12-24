@@ -146,38 +146,41 @@ class StateManager:
         self.update_windows()
         self.tm.draw()
 
-    def close_todo(self):
+    def quit_todo(self):
         if self.tm: self.tm.close()
         self.update_windows()
         self.in_todo = False
         self.set_mode(COLORED)
-        self.cw.help(self.active_window, self.get_active_card() , self.in_todo)
+        self.cw.help(self.active_window, self.get_active_card(), self.in_todo)
+
+    def hide_todo(self):
+        if self.tm: self.tm.close()
+
+    def navigate(self, move, get_new_active_card=None):
+        if self.in_todo: self.hide_todo()
+        move()
+        if get_new_active_card is not None: 
+            self.active_card = get_new_active_card()
+        self.update_windows()
+        if self.in_todo: self.open_todo()
 
     def up(self):
         if self.active_card > 0:
-            self.active_card -= 1
-            self.update_windows()
+            self.navigate(lambda: setattr(self, "active_card", self.active_card - 1))
 
     def down(self):
         if self.active_card < len(self.get_cards()) - 1:
-            self.active_card += 1
-            self.update_windows()
+            self.navigate(lambda: setattr(self, "active_card", self.active_card + 1))
 
     def right(self):
         if self.active_window < 3:
-            self.active_window += 1
-            self.active_card = min(self.active_card, max(len(self.get_cards()) - 1, 0))
-            self.update_windows()
-            #TODO: get this to work
-            # self.update_window()
-            # self.update_window(self.active_window - 1)
+            self.navigate(lambda: setattr(self, "active_window", self.active_window + 1),
+                          lambda: min(self.active_card, max(len(self.get_cards()) - 1, 0)))
 
     def left(self):
         if self.active_window > 0:
-            self.active_window -= 1
-            # self.active_card = min(self.active_card, len(WINDOWS[self.active_window].cards) - 1)
-            self.active_card = min(self.active_card, max(len(self.get_cards()) - 1, 0))
-            self.update_windows()
+            self.navigate(lambda: setattr(self, "active_window", self.active_window - 1), 
+                          lambda: min(self.active_card, max(len(self.get_cards()) - 1, 0)))
 
 
     def progress(self):
@@ -228,9 +231,9 @@ class StateManager:
         self.update_windows()
 
     def edit_project(self):
-        field = self.cw.make_selection("Attribute", EDIT_PROJECT_CHOICES)
-        new_val = self.cw.get_input(field, EDIT, self.dm.get_card_data(field, self.get_active_card().id)[0])
-        self.dm.edit_project(field, new_val, self.get_active_card().id)
+        if field := self.cw.make_selection("Attribute", EDIT_PROJECT_CHOICES):
+            new_val = self.cw.get_input(field, EDIT, self.dm.get_card_data(field, self.get_active_card().id)[0])
+            self.dm.edit_project(field, new_val, self.get_active_card().id)
         self.update_windows()
 
     def delete_project(self):
@@ -389,7 +392,7 @@ class TodoManager():
 
         longest = max([len(item[1]) for item in self.todo_list]) if len(self.todo_list) > 0 else 20
         self.h, self.w = self.card.todo_count + (4 * Y_PAD) + 1, longest + (4 * X_PAD) + 2
-        self.y, self.x = self.card.y, (self.card.x + SECTION_WIDTH - 1) if self.active_window < 2 else self.card.x - longest
+        self.y, self.x = self.card.y, (self.card.x + SECTION_WIDTH - 1) if self.active_window < 2 else self.card.x - longest - (4 * X_PAD) - 2 - 3
         self.win = curses.newwin(self.h, self.w, self.y, self.x)
 
         draw_box(self.win, c.WHITE)
@@ -449,7 +452,7 @@ class CommandWindow:
             self.win.addstr(y, x, f"{string[0]}: ", c.CYAN)
             x += 3
             color = c.WHITE
-            if not in_todo and active_card is not None and \
+            if not in_todo and \
                 ((active_window_index == ABANDONED and string == "regress") \
                 or (active_window_index == DONE and string == "progress") \
                 or (active_card.file in (None, "") and string == "nvim") \
@@ -468,16 +471,19 @@ class CommandWindow:
 
     def make_selection(self, message, choices, default=0):
         y = 1
-        x = self.show_message(message, SELECT) + 3
+        x = self.show_message(message, SELECT) + 4
         for i in range(len(choices)):
-            self.win.addstr(y, x, f"{i}", c.CYAN)
-            x += 1
-            self.win.addstr(y, x, f": {choices[i]}", c.WHITE)
+            self.win.addstr(y, x, f"{i}:", c.CYAN)
+            x += 2
+            self.win.addstr(y, x, f" {choices[i]}", c.WHITE)
             x += len(choices[i]) + 2 + 3
         selected_number = -1
         while selected_number not in range(0, len(choices)):
             try:
-                selected_number = int(chr(self.win.getch()))
+                key = chr(self.win.getch())
+                if key == 'q':
+                    return None
+                selected_number = int(key)
             except ValueError:
                 selected_number = -1
         return choices[selected_number]
@@ -556,7 +562,7 @@ class CommandWindow:
         
 
 class Window:
-    def __init__(self, id, height, width, y, x, title, title_pos=2, color=c.WHITE, style=c.NORMAL):
+    def __init__(self, id, height, width, y, x, title, title_pos=2, color=c.WHITE):
         self.id = id
         self.h = height
         self.w = width
@@ -707,12 +713,16 @@ def main(stdscr):
     sm, dm, cw = init()
 
     todo_keymap = {
-        "q":        lambda:   sm.close_todo(),
+        "q":        lambda:   sm.quit_todo(),
         "a":        lambda:   sm.add_item(),
         "KEY_UP":   lambda:   sm.tm.up(),
         "KEY_DOWN": lambda:   sm.tm.down(),
         "d":        lambda:   sm.delete_item(),
         "e":        lambda:   sm.edit_item(),
+        "h":        lambda:   sm.left(),
+        "l":        lambda:   sm.right(),
+        "k":        lambda:   sm.up(),
+        "j":        lambda:   sm.down(),
     }
 
     keymap = {
