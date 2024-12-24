@@ -16,7 +16,6 @@ import curses
 import sqlite3
 import logging
 import os
-from enum import Enum, auto
 import sys
 
 import ccolors as c # custom color module
@@ -86,7 +85,7 @@ MODES               =  [BLAND := 0, COLORED := 1, DIM := 2]
 COMMAND_STATES      =  [ADD := 0,   DELETE := 1,  EDIT := 2, SELECT := 3]
 EDIT_PROJECT_CHOICES   =  ["name", "description", "path", "file", "language"]
 
-# Global helper functions
+# Global helper function
 def draw_box(window, attributes):
     window.attron(attributes)
     window.box()
@@ -145,7 +144,7 @@ class StateManager:
         self.cw.help(self.active_window, self.get_active_card(), self.in_todo)
         self.set_mode(DIM)
         self.update_windows()
-        self.tm.draw_tm()
+        self.tm.draw()
 
     def close_todo(self):
         if self.tm: self.tm.close()
@@ -203,7 +202,7 @@ class StateManager:
         if self.tm:
             self.tm.update_tm(self.dm.add_item(self.cw.get_input("New todo item", ADD, ""), self.get_active_card().id))
             self.update_windows()
-            self.tm.draw_tm()
+            self.tm.draw()
 
     def edit_item(self):
         if self.tm and self.get_active_card().todo_count > 0:
@@ -211,13 +210,13 @@ class StateManager:
             todo_id = self.tm.todo_list[self.tm.selected_item][0]
             self.tm.update_tm(self.dm.edit_item(todo_id, new_description, self.get_active_card().id))
             self.update_windows()
-            self.tm.draw_tm()
+            self.tm.draw()
 
     def delete_item(self):
         if self.tm and self.get_active_card().todo_count > 0:
             self.tm.update_tm(self.dm.delete_item(self.tm.todo_list[self.tm.selected_item][0], self.get_active_card().id))
             self.update_windows()
-            self.tm.draw_tm()
+            self.tm.draw()
 
     def add_project(self):
         name = self.cw.get_input("Name", ADD, "")
@@ -378,12 +377,12 @@ class TodoManager():
         self.win = None
         self.selected_item = 0
 
-        self.draw_tm()
+        self.draw()
 
     def init(self):
         pass
 
-    def draw_tm(self):
+    def draw(self):
         if self.win:
             self.win.erase()
             self.win.refresh()
@@ -405,34 +404,24 @@ class TodoManager():
         self.win.refresh()
 
     def close(self):
-        self.win.erase()
-        self.items = []
-        self.win.refresh()
+        if self.win:
+            self.win.erase()
+            self.items = []
+            self.win.refresh()
         
     def down(self):
         self.selected_item = min(self.selected_item + 1, self.card.todo_count - 1)
-        self.draw_tm()
+        self.draw()
             
     def up(self):
         self.selected_item = max(self.selected_item - 1, 0)
-        self.draw_tm()
+        self.draw()
 
     def update_tm(self, new_list):
         self.todo_list = new_list
         self.card.todo_count = len(new_list)
         if self.selected_item >= self.card.todo_count:
             self.up()
-
-    # def edit_item(self, ):
-    #     if self.todo_count <= 0:
-    #         return
-    #     item_text = windows[HELP].draw_help(getting_input=True, editting=True)[0]
-    #     self.cursor.execute("UPDATE todo SET description = ? WHERE description = ?", (item_text, self.items[self.selected_item][1],))
-    #     self.conn.commit()
-    #     self.refresh()
-    #     self.close_todo()
-    #     self.open_todo()
-
 
 
 class CommandWindow:
@@ -566,106 +555,6 @@ class CommandWindow:
         return default if finput == "" else finput
         
 
-
-    # def draw_help(self, getting_input=False, editting=False):
-    #     if getting_input:
-    #         questions = ["name*", "description", "path*", "file", "language"]
-    #         if editting:
-    #
-    #             self.win.attron(c.BRIGHT_YELLOW | c.BOLD)
-    #             self.win.box()
-    #             x = 4
-    #             prompt = "Column to edit: "
-    #             self.win.addstr(1, x, prompt)
-    #             x += len(prompt)
-    #             self.win.attroff(c.BRIGHT_YELLOW | c.BOLD)
-    #             for i, question in enumerate(questions):
-    #
-    #                 self.win.attron(c.ORANGE | c.BOLD)
-    #                 prompt = f"{i+1}. "
-    #                 self.win.addstr(1, x, prompt)
-    #                 x += len(prompt)
-    #                 self.win.attroff(c.ORANGE | c.BOLD)
-    #
-    #                 self.win.attron(c.WHITE)
-    #                 prompt = f"{question} "
-    #                 self.win.addstr(1, x, prompt)
-    #                 x += len(prompt)
-    #                 self.win.attroff(c.WHITE)
-    #
-    #             self.win.attron(c.WHITE)
-    #             prompt = f" :  "
-    #             self.win.addstr(1, x, prompt)
-    #             x += len(prompt)
-    #             self.win.attroff(c.WHITE)
-    #
-    #             curses.echo()
-    #
-    #             self.win.attron(c.WHITE)
-    #             input = chr(self.win.getch(1, x))
-    #             self.win.attroff(c.WHITE)
-    #
-    #             selection = 0
-    #             if input in ('1', '2', '3', '4', '5'):
-    #                 selection = int(input) - 1
-    #
-    #             edit_card = windows[active_window].cards[active_card]
-    #             existing_answers = [edit_card.name, edit_card.description, edit_card.path, edit_card.file, edit_card.language]
-    #             self.win.erase()
-    #
-    #             x = 4
-    #             self.win.attron(c.BRIGHT_YELLOW | c.BOLD)
-    #             self.win.box()
-    #             prompt = f"Current value: "
-    #             self.win.addstr(1, x, prompt)
-    #             x += len(prompt)
-    #             self.win.attroff(c.BRIGHT_YELLOW | c.BOLD)
-    #
-    #             self.win.attron(c.WHITE)
-    #             prompt = f"{existing_answers[selection]}  "
-    #             self.win.addstr(1, x, prompt)
-    #             x += len(prompt)
-    #             self.win.attroff(c.WHITE)
-    #
-    #             self.win.attron(c.BRIGHT_YELLOW | c.BOLD)
-    #             prompt = f"New value: "
-    #             self.win.addstr(1, x, prompt)
-    #             x += len(prompt)
-    #             self.win.attroff(c.BRIGHT_YELLOW | c.BOLD)
-    #
-    #             self.win.attron(c.WHITE)
-    #             input = self.win.getstr(1, x).decode("utf-8")
-    #             self.win.attroff(c.WHITE)
-    #
-    #             # self.cursor.execute(f"UPDATE projects SET {questions[selection].strip("*")} = ? WHERE name = ?", (input, edit_card.name,))
-    #             # self.conn.commit()
-    #
-    #             curses.noecho()
-    #             self.draw_help()
-    #             self.refresh()
-    #             return
-    #             # return ret
-    #         else:
-    #             ret = []
-    #             for question in questions:
-    #                 self.win.attron(c.BRIGHT_YELLOW | c.BOLD)
-    #                 self.win.addstr(1, 4, question + ": ")
-    #                 self.win.box()
-    #                 self.win.attroff(c.BRIGHT_YELLOW | c.BOLD)
-    #                 curses.echo()
-    #                 input = self.win.getstr(1, 4 + len(question) + 2).decode("utf-8")
-    #                 curses.noecho()
-    #                 ret.append(input)
-    #                 self.win.erase()
-    #             self.draw_help()
-    #             self.refresh()
-    #             return ret
-    #     pass
-
-           
-
-
-
 class Window:
     def __init__(self, id, height, width, y, x, title, title_pos=2, color=c.WHITE, style=c.NORMAL):
         self.id = id
@@ -679,7 +568,6 @@ class Window:
         self.title_pos = title_pos
         self.cards = []
         self.card_offset = 0
-        # self.last_active = active_card
 
     def pull(self, dm):
         self.cards = [Card(id=card[0], # id
@@ -699,7 +587,7 @@ class Window:
 
         # TODO: only draw window once
         # draw this Window
-        self.draw_window(active_window_id, mode)
+        self.draw(active_window_id, mode)
 
         # TODO: only activate necessary cards (below active one)
         # draw all Cards
@@ -707,58 +595,14 @@ class Window:
             if self.id == active_window_id and i == active_card_index:
                 card.activate()
 
-            card.draw_card(self.card_offset, mode)
+            card.draw(self.card_offset, mode)
             self.card_offset += 3 if not card.active else 6
 
 
-    def activate_one(self, name):
-        global active_card
-        for i, card in enumerate(self.cards):
-            card.deactivate()
-            if card.name == name:
-                active_card = i
-                card.activate()
-                self.draw_window()
-                self.refresh()
-
-    def add_project(self):
-        answers = self.draw_help(getting_input=True)
-        if answers is not None:
-            # self.cursor.execute('''
-            #     INSERT INTO projects (name, description, path, file, status, language)
-            #     VALUES (?, ?, ?, ?, 'Backlog', ?)
-            # ''', (answers[0], answers[1], answers[2], answers[3], answers[4],))
-            # self.conn.commit()
-            windows[BACKLOG].pull()
-            windows[BACKLOG].draw_cards()
-            windows[BACKLOG].refresh()
-
-    def delete_project(self):
-        to_delete = windows[active_window].cards[active_card]
-        # self.cursor.execute("DELETE FROM projects WHERE name = ?", (to_delete.name,))
-        # self.conn.commit()
-        windows[active_window].pull()
-        windows[active_window].draw()
-        windows[active_window].refresh()
-
-    def edit_project(self):
-        self.draw_help(getting_input=True, editting=True)
-        windows[active_window].pull()
-        windows[active_window].draw()
-        windows[active_window].refresh()
-
-
-    def draw_window(self, active_window_id, mode=0):
+    def draw(self, active_window_id, mode=0):
         style = self.color | c.BOLD if active_window_id == self.id else self.color
         draw_box(self.win, (style if mode != DIM else c.DARK_GREY))
         self.win.addstr(0, self.title_pos, f" {self.title} ({str(len(self.cards))}) ", (c.WHITE | c.BOLD if active_window_id == self.id else style))
-        # if self.id == HELP:
-            # self.draw_help()
-        self.win.refresh()
-
-        # self.draw_cards()
-
-    def refresh(self):
         self.win.refresh()
 
 
@@ -778,18 +622,11 @@ class Card():
         self.todo_count = todo_count
         self.active = False
         self.text_color = c.WHITE
-        self.is_shoved = False
-        self.is_scrunched = False
-        self.todo_window = None
-        self.items = []
-        self.conn = sqlite3.connect(DB_PATH)
-        self.cursor = self.conn.cursor()
-        self.selected_item = 0
 
     def clear(self):
         self.win.erase()
 
-    def draw_card(self, y_offset, mode):
+    def draw(self, y_offset, mode):
         self.y += y_offset
         self.win.mvwin(self.y, self.x)
         # self.win.box()
@@ -804,8 +641,8 @@ class Card():
             draw_box(self.win, regular)
             self.draw_name_border(regular)
             self.win.addstr(3, (self.w // 2) - (len(self.description) // 2), f"{self.description}", c.WHITE)  # description
-            self.win.addstr(4, self.w - len("items: ") - 2 - len(str(self.todo_count)), "items: ")                                         # 'items: '
-            self.win.addstr(4, self.w - len(str(self.todo_count)) - 2, f"{self.todo_count}", color_code(self.todo_count, REGULAR))                  # todo count
+            self.win.addstr(4, self.w - len("items: ") - 2 - len(str(self.todo_count)), "items: ")            # 'items: '
+            self.win.addstr(4, self.w - len(str(self.todo_count)) - 2, f"{self.todo_count}", color_code(self.todo_count, REGULAR))   # todo count
         else:
             draw_box(self.win, dark)
 
@@ -847,15 +684,12 @@ def init():
         Window(DONE,       SECTION_HEIGHT, SECTION_WIDTH, 0, ((DONE)      * SECTION_WIDTH) + (DONE      * X_PAD),   (d := list(STATUSES.keys())[DONE]),     color=STATUSES[d])
                     ])
 
-    COMMAND_WINDOW = CommandWindow()
-
-
     # Connect to database (or create it if it doesn't exist)
     if sys.argv[0][-3:] == ".py":
         conn = sqlite3.connect(DB_PATH)
     else:
-        # conn = sqlite3.connect(PROD_DB_PATH)
-        conn = sqlite3.connect(DB_PATH)
+        conn = sqlite3.connect(PROD_DB_PATH)
+        # conn = sqlite3.connect(DB_PATH)
 
     cw = CommandWindow()
     cw.init()
