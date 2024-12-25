@@ -136,9 +136,10 @@ class StateManager:
     def open_nvim(self):
           os.system(TERMINAL_PREFIX + self.get_active_card().path + " -- bash -c \'" +  NEOVIM_PREFIX + self.get_active_card().file + "\'") if self.get_active_card().file != "" else "",
 
-    def open_both(self):
+    def open_both(self, quit=False):
         self.open_dir()
         self.open_nvim()
+        if quit: exit(0)
 
     def set_mode(self, new_mode):
         self.mode = new_mode
@@ -746,6 +747,7 @@ def main(stdscr):
         "c": lambda:  sm.open_dir(),
         "n": lambda:  sm.open_nvim(),
         "b": lambda:  sm.open_both(),
+        "B": lambda:  sm.open_both(True),
         "t": lambda:  sm.open_todo(),
         "p": lambda:  sm.progress(),
         "r": lambda:  sm.regress(),
