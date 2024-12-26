@@ -18,7 +18,8 @@ import logging
 import os
 import sys
 
-import ccolors as c # custom color module
+# custom curses color module
+from ccolors import *       # pyright: ignore[reportWildcardImportFromLibrary]
 
 
 
@@ -31,7 +32,7 @@ log = logging.getLogger(__name__)
 stdscr = curses.initscr()
 curses.start_color()
 curses.use_default_colors()
-c.init_16_colors()
+init_16_colors()
 
 
 #Configure windows
@@ -42,10 +43,10 @@ ACTIVE = 2
 DONE = 3
 HELP = 4
 STATUSES = {
-    "Abandoned":    c.RED,
-    "Backlog":      c.BLUE,
-    "Active":       c.BRIGHT_YELLOW,
-    "Done":         c.GREEN,
+    "Abandoned":    RED,
+    "Backlog":      BLUE,
+    "Active":       BRIGHT_YELLOW,
+    "Done":         GREEN,
 }
 
 
@@ -74,8 +75,8 @@ MEDIUM_TODO_ITEMS   = 6
 MAX_TODO_ITEMS      = 99
 REGULAR             = 0
 DARK                = 1
-TODO_COLORS = [(NO_TODO_ITEMS, REGULAR, c.DIM_WHITE), (LOW_TODO_ITEMS, REGULAR, c.GREEN), (MEDIUM_TODO_ITEMS, REGULAR, c.BRIGHT_YELLOW), (MAX_TODO_ITEMS, REGULAR, c.RED),
-               (NO_TODO_ITEMS, DARK, c.GUTTER), (LOW_TODO_ITEMS, DARK, c.LIGHT_GREEN), (MEDIUM_TODO_ITEMS, DARK, c.YELLOW), (MAX_TODO_ITEMS, DARK, c.LIGHT_RED)
+TODO_COLORS = [(NO_TODO_ITEMS, REGULAR, DIM_WHITE), (LOW_TODO_ITEMS, REGULAR, GREEN), (MEDIUM_TODO_ITEMS, REGULAR, BRIGHT_YELLOW), (MAX_TODO_ITEMS, REGULAR, RED),
+               (NO_TODO_ITEMS, DARK, GUTTER), (LOW_TODO_ITEMS, DARK, LIGHT_GREEN), (MEDIUM_TODO_ITEMS, DARK, YELLOW), (MAX_TODO_ITEMS, DARK, LIGHT_RED)
                ]
 color_code = lambda tc, s: [color for limit, shade, color in TODO_COLORS if tc <= limit and s == shade][0]
 
@@ -130,11 +131,13 @@ class StateManager:
         else:
             return Card(-1, 0, 0, 0, 0, "", "", "", "", "") # dummy card to fool linter
 
-    def open_dir(self):
+    def open_dir(self, quit=False):
         os.system(TERMINAL_PREFIX + self.get_active_card().path)
+        if quit: exit(0)
 
-    def open_nvim(self):
-          os.system(TERMINAL_PREFIX + self.get_active_card().path + " -- bash -c \'" +  NEOVIM_PREFIX + self.get_active_card().file + "\'") if self.get_active_card().file != "" else "",
+    def open_nvim(self, quit=False):
+        os.system(TERMINAL_PREFIX + self.get_active_card().path + " -- bash -c \'" +  NEOVIM_PREFIX + self.get_active_card().file + "\'") if self.get_active_card().file != "" else "",         # pyright: ignore[reportUnusedExpression]
+        if quit: exit(0)
 
     def open_both(self, quit=False):
         self.open_dir()
@@ -406,13 +409,13 @@ class TodoManager():
         self.y, self.x = self.card.y, (self.card.x + SECTION_WIDTH - 1) if self.active_window < 2 else self.card.x - longest - (4 * X_PAD) - 2 - 3
         self.win = curses.newwin(self.h, self.w, self.y, self.x)
 
-        draw_box(self.win, c.WHITE)
-        self.win.addstr(1, 2, "TODO:", c.WHITE | c.BOLD)
-        self.win.addstr(2, 2, "-----", c.WHITE | c.BOLD)
+        draw_box(self.win, WHITE)
+        self.win.addstr(1, 2, "TODO:", WHITE | BOLD)
+        self.win.addstr(2, 2, "-----", WHITE | BOLD)
         self.items = ["• " + item[1] for item in self.todo_list if item[3] == 0]
         item_y =  3
         for i, item in enumerate(self.items):
-            self.win.addstr(item_y, 4, item, c.INVERT if i == self.selected_item else c.WHITE)
+            self.win.addstr(item_y, 4, item, INVERT if i == self.selected_item else WHITE)
             item_y += 1
         
         self.win.refresh()
@@ -460,33 +463,33 @@ class CommandWindow:
         x = X_PAD * 2
         commands = ["add", "delete", "edit", "quit"] if in_todo else ["add", "delete", "edit", "cd", "nvim", "both", "todo", "progress", "regress", "mode", "quit"]
         for string in commands:
-            self.win.addstr(y, x, f"{string[0]}: ", c.CYAN)
+            self.win.addstr(y, x, f"{string[0]}: ", CYAN)
             x += 3
-            color = c.WHITE
+            color = WHITE
             if not in_todo and \
                 ((active_window_index == ABANDONED and string == "regress") \
                 or (active_window_index == DONE and string == "progress") \
                 or (active_card.file in (None, "") and string == "nvim") \
                 or (active_card.path == "" and string == "cd") \
                 or (active_card.description in(None, "") and string == "description")):
-                color = c.DARK_GREY
+                color = DARK_GREY
             elif in_todo and \
                  (active_card.todo_count <= 0):
                 pass
             else:
-                color = c.WHITE
+                color = WHITE
             self.win.addstr(y, x, f"{string}", color)
             x += len(string) + 5
-        draw_box(self.win, c.WHITE)
+        draw_box(self.win, WHITE)
         self.win.refresh()
 
     def make_selection(self, message, choices, default=0):
         y = 1
         x = self.show_message(message, SELECT) + 4
         for i in range(len(choices)):
-            self.win.addstr(y, x, f"{i}:", c.CYAN)
+            self.win.addstr(y, x, f"{i}:", CYAN)
             x += 2
-            self.win.addstr(y, x, f" {choices[i]}", c.WHITE)
+            self.win.addstr(y, x, f" {choices[i]}", WHITE)
             x += len(choices[i]) + 2 + 3
         selected_number = -1
         while selected_number not in range(0, len(choices)):
@@ -505,16 +508,16 @@ class CommandWindow:
         states = ["Adding:", "Changing:", "Deleting:", "Selecting:"]
         mlen = max(len(message) + 3 + 4, len(states[state]))
 
-        draw_box(self.win, c.WHITE)
+        draw_box(self.win, WHITE)
 
         message_prompt = f"  {message}    "
-        self.win.addstr(1, (1 * X_PAD), message_prompt, c.BRIGHT_YELLOW | c.BOLD)
+        self.win.addstr(1, (1 * X_PAD), message_prompt, BRIGHT_YELLOW | BOLD)
 
 
         self.win.addstr(0, 1, states[state])
-        self.win.addch(0, mlen, '┬', c.WHITE)
-        self.win.addch(1, mlen, '│', c.WHITE)
-        self.win.addch(2, mlen, '┴', c.WHITE)
+        self.win.addch(0, mlen, '┬', WHITE)
+        self.win.addch(1, mlen, '│', WHITE)
+        self.win.addch(2, mlen, '┴', WHITE)
         return mlen
 
 
@@ -527,11 +530,11 @@ class CommandWindow:
         if default != "":
             dlen = max(len("Default: "), len(default) + 3 + 4 + 2)
             self.win.addstr(0, mlen + 1, "Default:")
-            self.win.addch(0, mlen + dlen, '┬', c.WHITE)
-            self.win.addch(1, mlen + dlen, '│', c.WHITE)
-            self.win.addch(2, mlen + dlen, '┴', c.WHITE)
+            self.win.addch(0, mlen + dlen, '┬', WHITE)
+            self.win.addch(1, mlen + dlen, '│', WHITE)
+            self.win.addch(2, mlen + dlen, '┴', WHITE)
             default_prompt = f"   \"{default}\"  "
-            self.win.addstr(1, mlen + 1, default_prompt, c.BRIGHT_YELLOW | c.BOLD)
+            self.win.addstr(1, mlen + 1, default_prompt, BRIGHT_YELLOW | BOLD)
         else:
             dlen = 0
 
@@ -573,7 +576,7 @@ class CommandWindow:
         
 
 class Window:
-    def __init__(self, id, height, width, y, x, title, title_pos=2, color=c.WHITE):
+    def __init__(self, id, height, width, y, x, title, title_pos=2, color=WHITE):
         self.id = id
         self.h = height
         self.w = width
@@ -617,9 +620,9 @@ class Window:
 
 
     def draw(self, active_window_id, mode=0):
-        style = self.color | c.BOLD if active_window_id == self.id else self.color
-        draw_box(self.win, (style if mode != DIM else c.DARK_GREY))
-        self.win.addstr(0, self.title_pos, f" {self.title} ({str(len(self.cards))}) ", (c.WHITE | c.BOLD if active_window_id == self.id else style))
+        style = self.color | BOLD if active_window_id == self.id else self.color
+        draw_box(self.win, (style if mode != DIM else DARK_GREY))
+        self.win.addstr(0, self.title_pos, f" {self.title} ({str(len(self.cards))}) ", (WHITE | BOLD if active_window_id == self.id else style))
         self.win.refresh()
 
 
@@ -638,7 +641,7 @@ class Card():
         self.language = language
         self.todo_count = todo_count
         self.active = False
-        self.text_color = c.WHITE
+        self.text_color = WHITE
 
     def clear(self):
         self.win.erase()
@@ -648,16 +651,16 @@ class Card():
         self.win.mvwin(self.y, self.x)
         # self.win.box()
 
-        self.win.addstr(Y_PAD, X_PAD, self.name, self.text_color | c.BOLD)
+        self.win.addstr(Y_PAD, X_PAD, self.name, self.text_color | BOLD)
         self.win.addstr(Y_PAD, self.w - len(self.language) - X_PAD, self.language, self.text_color)
 
-        dark = c.DARK_GREY if mode == BLAND else color_code(self.todo_count, DARK) 
-        regular = c.WHITE if mode == BLAND or self.active and self.todo_count == 0 else color_code(self.todo_count, DARK) 
+        dark = DARK_GREY if mode == BLAND else color_code(self.todo_count, DARK) 
+        regular = WHITE if mode == BLAND or self.active and self.todo_count == 0 else color_code(self.todo_count, DARK) 
 
         if self.active:
             draw_box(self.win, regular)
             self.draw_name_border(regular)
-            self.win.addstr(3, (self.w // 2) - (len(self.description) // 2), f"{self.description}", c.WHITE)  # description
+            self.win.addstr(3, (self.w // 2) - (len(self.description) // 2), f"{self.description}", WHITE)  # description
             self.win.addstr(4, self.w - len("items: ") - 2 - len(str(self.todo_count)), "items: ")            # 'items: '
             self.win.addstr(4, self.w - len(str(self.todo_count)) - 2, f"{self.todo_count}", color_code(self.todo_count, REGULAR))   # todo count
         else:
@@ -717,17 +720,17 @@ def init():
     sm = StateManager(dm, cw)
     sm.init()
 
-    return sm, dm, cw
+    return sm
 
 
 def main(stdscr):
-    sm, dm, cw = init()
+    sm = init()
 
     todo_keymap = {
         "q":        lambda:   sm.quit_todo(),
         "a":        lambda:   sm.add_item(),
-        "KEY_UP":   lambda:   sm.tm.up(),
-        "KEY_DOWN": lambda:   sm.tm.down(),
+        "KEY_UP":   lambda:   sm.tm.up(),       # pyright: ignore[reportOptionalMemberAccess]
+        "KEY_DOWN": lambda:   sm.tm.down(),     # pyright: ignore[reportOptionalMemberAccess]
         "d":        lambda:   sm.delete_item(),
         "e":        lambda:   sm.edit_item(),
         "h":        lambda:   sm.left(),
@@ -745,7 +748,9 @@ def main(stdscr):
         "e": lambda:  sm.edit_project(),
 
         "c": lambda:  sm.open_dir(),
+        "C": lambda:  sm.open_dir(True),
         "n": lambda:  sm.open_nvim(),
+        "N": lambda:  sm.open_nvim(True),
         "b": lambda:  sm.open_both(),
         "B": lambda:  sm.open_both(True),
         "t": lambda:  sm.open_todo(),
