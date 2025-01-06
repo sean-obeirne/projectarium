@@ -20,6 +20,7 @@ import sys
 
 # custom curses color module
 from ccolors import *       # pyright: ignore[reportWildcardImportFromLibrary]
+from cinput import *       # pyright: ignore[reportWildcardImportFromLibrary]
 
 
 
@@ -116,7 +117,8 @@ class StateManager:
     def update_windows(self): # TODO: only update active window and new active window
         for window in WINDOWS:
             window.update(self.dm, self.active_window, self.active_card, self.mode)
-        self.cw.help(self.active_window, self.get_active_card(), self.in_todo)
+        commands = ["add", "delete", "edit", "quit"] if self.in_todo else ["add", "delete", "edit", "cd", "nvim", "both", "todo", "progress", "regress", "mode", "quit"]
+        self.cw.help(commands)
 
     def update_window(self, window_id=None):
         window_id = self.active_window if window_id is None else window_id
@@ -129,7 +131,8 @@ class StateManager:
         if len(self.get_cards()) > 0:
             return WINDOWS[self.active_window].cards[self.active_card]
         else:
-            return Card(-1, 0, 0, 0, 0, "", "", "", "", "") # dummy card to fool linter
+            return Card(-1, 0, 0, 0, 0, "", "", "", "", 0, "") # dummy card to fool linter
+    # def __init__(self, id, height, width, y, x, name, path, description="", file="", priority=0, language="", todo_count=0):
 
     def open_dir(self, quit=False):
         os.system(TERMINAL_PREFIX + self.get_active_card().path)
@@ -155,7 +158,7 @@ class StateManager:
     def open_todo(self):
         self.tm = TodoManager(self.active_window, self.get_active_card(), self.dm.pull_todo_data(self.get_active_card().id))
         self.in_todo = True
-        self.cw.help(self.active_window, self.get_active_card(), self.in_todo)
+        # self.cw.help(self.active_window, self.get_active_card(), self.in_todo)
         self.set_mode(DIM)
         self.update_windows()
         self.tm.draw()
@@ -165,7 +168,7 @@ class StateManager:
         self.update_windows()
         self.in_todo = False
         self.set_mode(COLORED)
-        self.cw.help(self.active_window, self.get_active_card(), self.in_todo)
+        # self.cw.help(self.active_window, self.get_active_card(), self.in_todo)
 
     def hide_todo(self):
         if self.tm: self.tm.close()
@@ -214,16 +217,28 @@ class StateManager:
         self.up()
         if len(self.get_cards()) == 0:
             self.left()
+
+    def increment_priority(self):
+        card = WINDOWS[self.active_window].cards[self.active_card]
+        if card.priority < 99:
+            self.dm.increment_priority(card.name, card.priority)
+            self.update_windows()
+
+    def decrement_priority(self):
+        card = WINDOWS[self.active_window].cards[self.active_card]
+        if card.priority > 0:
+            self.dm.decrement_priority(card.name, card.priority)
+            self.update_windows()
         
     def add_item(self):
         if self.tm:
-            self.tm.update_tm(self.dm.add_item(self.cw.get_input("New todo item", ADD, ""), self.get_active_card().id))
+            self.tm.update_tm(self.dm.add_item(self.cw.get_input("New todo item"), self.get_active_card().id))
             self.update_windows()
             self.tm.draw()
 
     def edit_item(self):
         if self.tm and self.get_active_card().todo_count > 0:
-            new_description = self.cw.get_input("Description", EDIT, self.tm.todo_list[self.tm.selected_item][1])
+            new_description = self.cw.get_input("Description", default=self.tm.todo_list[self.tm.selected_item][1])
             todo_id = self.tm.todo_list[self.tm.selected_item][0]
             self.tm.update_tm(self.dm.edit_item(todo_id, new_description, self.get_active_card().id))
             self.update_windows()
@@ -236,22 +251,22 @@ class StateManager:
             self.tm.draw()
 
     def add_project(self):
-        name = self.cw.get_input("Name", ADD, "")
-        description = self.cw.get_input("Description", ADD, "")
-        path = self.cw.get_input("Path", ADD, "")
-        file = self.cw.get_input("File", ADD, "")
-        language = self.cw.get_input("Language", ADD, "")
+        name = self.cw.get_input("Name")
+        description = self.cw.get_input("Description")
+        path = self.cw.get_input("Path", input_type="path")
+        file = self.cw.get_input("File", input_type="path")
+        language = self.cw.get_input("Language")
         self.dm.add_project(name, description, path, file, "Backlog", language)
         self.update_windows()
 
     def edit_project(self):
         if field := self.cw.make_selection("Attribute", EDIT_PROJECT_CHOICES):
-            new_val = self.cw.get_input(field, EDIT, self.dm.get_card_data(field, self.get_active_card().id)[0])
+            new_val = self.cw.get_input(field, default=self.dm.get_card_data(field, self.get_active_card().id)[0])
             self.dm.edit_project(field, new_val, self.get_active_card().id)
         self.update_windows()
 
     def delete_project(self):
-        if self.cw.make_selection("Delete?", ["Yes", "No"], "No") == "Yes":
+        if self.cw.make_selection("Delete?", ["Yes", "No"], default="No") == "Yes":
             self.dm.delete_project(self.get_active_card().id)
             self.up()
         self.update_windows()
@@ -264,7 +279,7 @@ class DatabaseManager:
         self.cursor = conn.cursor()
         self.init()
 
-    def init(self,):
+    def init(self):
         # Create the 'projects' table
         self.cursor.execute('''
             CREATE TABLE IF NOT EXISTS projects (
@@ -273,9 +288,10 @@ class DatabaseManager:
                 description TEXT CHECK(LENGTH(description) <= 29),
                 path TEXT NOT NULL,
                 file TEXT,
+                priority INTEGER DEFAULT 0,
                 status TEXT NOT NULL,
                 language TEXT
-            )
+            );
         ''')
         # Create the 'todo' table
         self.cursor.execute('''
@@ -286,8 +302,10 @@ class DatabaseManager:
                 deleted BOOLEAN NOT NULL DEFAULT 0,
                 project_id,
                 FOREIGN KEY (project_id) REFERENCES projects (id)
-            )
+            );
         ''')
+
+        # self.cursor.execute("ALTER TABLE projects ADD COLUMN priority INTEGER DEFAULT 0;")
 
         self.conn.commit()
 
@@ -300,24 +318,24 @@ class DatabaseManager:
             self.cursor.execute("SELECT COUNT(*) FROM projects")
             if self.cursor.fetchone()[0] == 0:
                 default_projects = [
-                    ("WotR",            "Wizards of the Rift",          "/home/sean/code/paused/godot/Wizards-of-the-Rift/","",                 "Abandoned",  "Godot"),
-                    ("LearnScape",      "General learning visualizer",  "/home/sean/code/paused/LearnScape/",               "learnscape.py",    "Abandoned",  "Python"),
-                    ("ROMs",            "ROM emulation optimization",   "/home/sean/code/future/ROMs/",                     "",                 "Backlog",      "C"),
-                    ("goverse",         "Go VCS application",           "/home/sean/code/active/go/goverse/",               "cli/main.go",      "Active",       "Go"),
-                    ("projectarium",    "Project progress tracker",     "/home/sean/code/active/python/projectarium/",      "projectarium.py",  "Active",       "Python"),
-                    ("snr",             "Search and replace plugin",    "/home/sean/.config/nvim/lua/snr/",                 "init.lua",         "Active",       "Lua"),
-                    ("todua",           "Todo list for Neovim",         "/home/sean/.config/nvim/lua/todua/",               "init.lua",         "Active",       "Lua"),
-                    ("macro-blues",     "Custom macropad firmware",     "/home/sean/code/active/c/macro-c.BLUEs/",          "macro-c.BLUEs",      "Active",       "C"),
-                    ("leetcode",        "Coding interview practice",    "/home/sean/code/paused/leetcode/",                 "",                 "Active",       "Python"),
-                    ("TestTaker",       "ChatGPT->Python test maker",   "/home/sean/code/paused/TestTaker/",                "testtaker.py",     "Active",       "Python"),
-                    ("Mission-Uplink",  "TFG Mission Uplink",           "/home/sean/code/tfg/Mission-Uplink/",              "README.md",        "Active",       "Go,C"),
-                    ("Sorter",          "Sorting algoithm visualizer",  "/home/sean/code/done/Sorter/",                     "sorter.py",        "Done",         "Python"),
-                    ("landing-page",    "Cute application launcher",    "/home/sean/code/done/landing-page/",               "landing-page.py",  "Done",         "Python"),
-                    ################"   valid description length  "################################################################################################
+                    ("WotR",            "Wizards of the Rift",          "/home/sean/code/paused/godot/Wizards-of-the-Rift/","",                 0,  "Abandoned",  "Godot"),
+                    ("LearnScape",      "General learning visualizer",  "/home/sean/code/paused/LearnScape/",               "learnscape.py",    0,  "Abandoned",  "Python"),
+                    ("ROMs",            "ROM emulation optimization",   "/home/sean/code/future/ROMs/",                     "",                 0,  "Backlog",      "C"),
+                    ("goverse",         "Go VCS application",           "/home/sean/code/active/go/goverse/",               "cli/main.go",      0,  "Active",       "Go"),
+                    ("projectarium",    "Project progress tracker",     "/home/sean/code/active/python/projectarium/",      "projectarium.py",  0,  "Active",       "Python"),
+                    ("snr",             "Search and replace plugin",    "/home/sean/.config/nvim/lua/snr/",                 "init.lua",         0,  "Active",       "Lua"),
+                    ("todua",           "Todo list for Neovim",         "/home/sean/.config/nvim/lua/todua/",               "init.lua",         0,  "Active",       "Lua"),
+                    ("macro-blues",     "Custom macropad firmware",     "/home/sean/code/active/c/macro-c.BLUEs/",          "macro-c.BLUEs",    0,  "Active",       "C"),
+                    ("leetcode",        "Coding interview practice",    "/home/sean/code/paused/leetcode/",                 "",                 0,  "Active",       "Python"),
+                    ("TestTaker",       "ChatGPT->Python test maker",   "/home/sean/code/paused/TestTaker/",                "testtaker.py",     0,  "Active",       "Python"),
+                    ("Mission-Uplink",  "TFG Mission Uplink",           "/home/sean/code/tfg/Mission-Uplink/",              "README.md",        0,  "Active",       "Go,C"),
+                    ("Sorter",          "Sorting algoithm visualizer",  "/home/sean/code/done/Sorter/",                     "sorter.py",        0,  "Done",         "Python"),
+                    ("landing-page",    "Cute application launcher",    "/home/sean/code/done/landing-page/",               "landing-page.py",  0,  "Done",         "Python"),
+                    ####################"   valid description length  "###################################################################################################
                 ]
                 self.cursor.executemany('''
-                    INSERT INTO projects (name, description, path, file, status, language)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT INTO projects (name, description, path, file, priority, status, language)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                 ''', default_projects)
                 self.conn.commit()
 
@@ -339,7 +357,7 @@ class DatabaseManager:
     def pull_card_data(self, title):
         # get cards, then append to the end of the query result the number of tasks the card has
         return [tuple(list(row) + [self.cursor.execute("SELECT COUNT(*) FROM todo WHERE project_id = ? AND deleted = ?;", (row[0], 0,)).fetchone()[0]])
-            for row in self.cursor.execute("SELECT * FROM projects WHERE status = ? ORDER BY LOWER(name);", (title,)).fetchall()]
+            for row in self.cursor.execute("SELECT * FROM projects WHERE status = ? ORDER BY priority DESC, LOWER(name);", (title,)).fetchall()]
 
     def pull_todo_data(self, id):
         return self.cursor.execute("SELECT * FROM todo WHERE project_id = ? and deleted = ?", (id, 0)).fetchall()
@@ -353,6 +371,14 @@ class DatabaseManager:
 
     def regress(self, name, current_status):
         self.cursor.execute("UPDATE projects SET status = ? WHERE name = ?", (list(STATUSES.keys())[current_status - 1], name,))
+        self.conn.commit()
+
+    def increment_priority(self, name, current_priority):
+        self.cursor.execute("UPDATE projects SET priority = ? WHERE name = ?", (current_priority + 1, name,))
+        self.conn.commit()
+
+    def decrement_priority(self, name, current_priority):
+        self.cursor.execute("UPDATE projects SET priority = ? WHERE name = ?", (current_priority - 1, name,))
         self.conn.commit()
 
     def add_project(self, name, description, path, file, status, language):
@@ -441,140 +467,6 @@ class TodoManager():
             self.up()
 
 
-class CommandWindow:
-    def __init__(self):
-        self.h = COMMAND_WINDOW_HEIGHT
-        self.w = SCREEN_WIDTH
-        self.y = SCREEN_HEIGHT - COMMAND_WINDOW_HEIGHT
-        self.x = 0
-        self.win = curses.newwin(self.h, self.w, self.y, self.x)
-        self.state = ADD
-        # self.mode = 
-
-    def set_state(self, state):
-        self.state = state
-
-    def init(self):
-        self.state = HELP
-
-    def help(self, active_window_index, active_card, in_todo):
-        self.win.erase()
-        y = Y_PAD
-        x = X_PAD * 2
-        commands = ["add", "delete", "edit", "quit"] if in_todo else ["add", "delete", "edit", "cd", "nvim", "both", "todo", "progress", "regress", "mode", "quit"]
-        for string in commands:
-            self.win.addstr(y, x, f"{string[0]}: ", CYAN)
-            x += 3
-            color = WHITE
-            if not in_todo and \
-                ((active_window_index == ABANDONED and string == "regress") \
-                or (active_window_index == DONE and string == "progress") \
-                or (active_card.file in (None, "") and string == "nvim") \
-                or (active_card.path == "" and string == "cd") \
-                or (active_card.description in(None, "") and string == "description")):
-                color = DARK_GREY
-            elif in_todo and \
-                 (active_card.todo_count <= 0):
-                pass
-            else:
-                color = WHITE
-            self.win.addstr(y, x, f"{string}", color)
-            x += len(string) + 5
-        draw_box(self.win, WHITE)
-        self.win.refresh()
-
-    def make_selection(self, message, choices, default=0):
-        y = 1
-        x = self.show_message(message, SELECT) + 4
-        for i in range(len(choices)):
-            self.win.addstr(y, x, f"{i}:", CYAN)
-            x += 2
-            self.win.addstr(y, x, f" {choices[i]}", WHITE)
-            x += len(choices[i]) + 2 + 3
-        selected_number = -1
-        while selected_number not in range(0, len(choices)):
-            try:
-                key = chr(self.win.getch())
-                if key == 'q':
-                    return None
-                selected_number = int(key)
-            except ValueError:
-                selected_number = -1
-        return choices[selected_number]
-
-    def show_message(self, message, state):
-        self.win.erase()
-        message = message.strip()
-        states = ["Adding:", "Changing:", "Deleting:", "Selecting:"]
-        mlen = max(len(message) + 3 + 4, len(states[state]))
-
-        draw_box(self.win, WHITE)
-
-        message_prompt = f"  {message}    "
-        self.win.addstr(1, (1 * X_PAD), message_prompt, BRIGHT_YELLOW | BOLD)
-
-
-        self.win.addstr(0, 1, states[state])
-        self.win.addch(0, mlen, '┬', WHITE)
-        self.win.addch(1, mlen, '│', WHITE)
-        self.win.addch(2, mlen, '┴', WHITE)
-        return mlen
-
-
-
-    def get_input(self, message, state, default="", placeholder_len=0):
-        default = default.strip()
-        self.win.erase()
-        self.win.refresh()
-        mlen = self.show_message(message, state)
-        if default != "":
-            dlen = max(len("Default: "), len(default) + 3 + 4 + 2)
-            self.win.addstr(0, mlen + 1, "Default:")
-            self.win.addch(0, mlen + dlen, '┬', WHITE)
-            self.win.addch(1, mlen + dlen, '│', WHITE)
-            self.win.addch(2, mlen + dlen, '┴', WHITE)
-            default_prompt = f"   \"{default}\"  "
-            self.win.addstr(1, mlen + 1, default_prompt, BRIGHT_YELLOW | BOLD)
-        else:
-            dlen = 0
-
-        curses.echo()
-        curses.curs_set(1)
-
-        input_pos = (1 * X_PAD) + mlen + dlen + 3
-        input, i = [], -1
-        self.win.keypad(True)
-        while (key := self.win.getch(1, input_pos + i)):
-            if key in (10, 13):
-                break
-            elif key == 27:
-                input.clear()
-                break
-            elif key == curses.KEY_BACKSPACE:
-                if len(input) > 0:
-                    input.pop(i)
-                    i -= 1
-                self.win.addstr(1, input_pos + i, ('_' if placeholder_len > 0 else ' '))
-                self.win.move(1, input_pos + i - 1)
-                self.win.refresh()
-                continue
-            # elif key == curses.KEY_LEFT:
-            #     i -= 1
-            #     self.win.move(1, input_pos + i - 1)
-            #     self.win.refresh()
-            #     continue
-            input.append(chr(key))
-            i += 1
-
-        finput = "".join(input)
-            
-        curses.curs_set(0)
-        curses.noecho()
-
-
-        return default if finput == "" else finput
-        
-
 class Window:
     def __init__(self, id, height, width, y, x, title, title_pos=2, color=WHITE):
         self.id = id
@@ -592,9 +484,9 @@ class Window:
     def pull(self, dm):
         self.cards = [Card(id=card[0], # id
             height=INACTIVE_CARD_HEIGHT , width=self.w - (2 * X_PAD),y=self.y + Y_PAD, x=self.x + X_PAD,            # UI elements
-            name=card[1], path=card[3], description=card[2], file=card[4], language=card[6], todo_count=card[7])    # Card data
+            name=card[1], path=card[3], description=card[2], file=card[4], priority=card[7], language=card[6], todo_count=card[8])    # Card data
                 for card in dm.pull_card_data(self.title)]
-
+        log.info(self.cards[0].language)
 
     def has_cards(self):
         return len(self.cards) > 0
@@ -627,7 +519,7 @@ class Window:
 
 
 class Card():
-    def __init__(self, id, height, width, y, x, name, path, description="", file="", language="", todo_count=0):
+    def __init__(self, id, height, width, y, x, name, path, description="", file="", priority=0, language="", todo_count=0):
         self.id = id
         self.h = height
         self.w = width
@@ -637,6 +529,7 @@ class Card():
         self.name = name
         self.path = path
         self.file = file
+        self.priority = priority
         self.description = description
         self.language = language
         self.todo_count = todo_count
@@ -662,6 +555,9 @@ class Card():
             self.draw_name_border(regular)
             self.win.addstr(3, (self.w // 2) - (len(self.description) // 2), f"{self.description}", WHITE)  # description
             self.win.addstr(4, self.w - len("items: ") - 2 - len(str(self.todo_count)), "items: ")            # 'items: '
+            # self.win.addstr(4, self.w - len("items: ") - 2 - len(str(self.todo_count)), "items: ")            # 'items: '
+            self.win.addstr(4, 2, "priority: ")
+            self.win.addstr(4, len("priority: ") + 2, f"{self.priority}", self.priority)
             self.win.addstr(4, self.w - len(str(self.todo_count)) - 2, f"{self.todo_count}", color_code(self.todo_count, REGULAR))   # todo count
         else:
             draw_box(self.win, dark)
@@ -712,7 +608,6 @@ def init():
         # conn = sqlite3.connect(DB_PATH)
 
     cw = CommandWindow()
-    cw.init()
         
     dm = DatabaseManager(conn)
     dm.init()
@@ -756,6 +651,8 @@ def main(stdscr):
         "t": lambda:  sm.open_todo(),
         "p": lambda:  sm.progress(),
         "r": lambda:  sm.regress(),
+        "+": lambda:  sm.increment_priority(),
+        "-": lambda:  sm.decrement_priority(),
 
         "KEY_LEFT":   lambda:  sm.left(),
         "KEY_RIGHT":  lambda:  sm.right(),
