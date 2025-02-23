@@ -56,6 +56,7 @@ PROD_DB_PATH = "/home/sean/bin/.projectarium.db"
 DB_PATH = ".projectarium.db"
 TERMINAL_PREFIX = "gnome-terminal --maximize --working-directory="
 NEOVIM_PREFIX = "nvim "
+TMUX_PREFIX = "tmux new-session -A -s "
 
 
 # UI dimensions
@@ -135,12 +136,20 @@ class StateManager:
     # def __init__(self, id, height, width, y, x, name, path, description="", file="", priority=0, language="", todo_count=0):
 
     def open_dir(self, quit=False):
-        os.system(TERMINAL_PREFIX + self.get_active_card().path)
+        os.system(f"{TERMINAL_PREFIX}{self.get_active_card().path}")
         if quit: exit(0)
 
     def open_nvim(self, quit=False):
-        os.system(TERMINAL_PREFIX + self.get_active_card().path + " -- bash -c \'" +  NEOVIM_PREFIX + self.get_active_card().file + "\'") if self.get_active_card().file != "" else "",         # pyright: ignore[reportUnusedExpression]
+        os.system(f"{TERMINAL_PREFIX}{self.get_active_card().path} -- bash -c \'{NEOVIM_PREFIX + self.get_active_card().file}\'") if self.get_active_card().file != "" else "",         # pyright: ignore[reportUnusedExpression]
         if quit: exit(0)
+
+    def open_tmux(self, quit=False):
+        session_name = self.get_active_card().name.lower().replace(" ", "_").replace("-", "_")
+        print(session_name)
+        # os.system(TERMINAL_PREFIX + self.get_active_card().path + " -- bash -c \'" +  NEOVIM_PREFIX + self.get_active_card().file + "\'") if self.get_active_card().file != "" else "",         # pyright: ignore[reportUnusedExpression]
+        os.system(f"{TERMINAL_PREFIX}{self.get_active_card().path} -- bash -c \'{TMUX_PREFIX} {session_name} -c {self.get_active_card().path}\'")
+        if quit: exit(0)
+
 
     def open_both(self, quit=False):
         self.open_dir()
@@ -648,6 +657,8 @@ def main(stdscr):
         "N": lambda:  sm.open_nvim(True),
         "b": lambda:  sm.open_both(),
         "B": lambda:  sm.open_both(True),
+        "x": lambda:  sm.open_tmux(),
+        "X": lambda:  sm.open_tmux(True),
         "t": lambda:  sm.open_todo(),
         "p": lambda:  sm.progress(),
         "r": lambda:  sm.regress(),
