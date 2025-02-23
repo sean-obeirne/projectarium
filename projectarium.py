@@ -145,9 +145,7 @@ class StateManager:
 
     def open_tmux(self, quit=False):
         session_name = self.get_active_card().name.lower().replace(" ", "_").replace("-", "_")
-        print(session_name)
-        # os.system(TERMINAL_PREFIX + self.get_active_card().path + " -- bash -c \'" +  NEOVIM_PREFIX + self.get_active_card().file + "\'") if self.get_active_card().file != "" else "",         # pyright: ignore[reportUnusedExpression]
-        os.system(f"{TERMINAL_PREFIX}{self.get_active_card().path} -- bash -c \'{TMUX_PREFIX} {session_name} -c {self.get_active_card().path}\'")
+        os.system(f"{TERMINAL_PREFIX}{self.get_active_card().path} -- bash -c \'{TMUX_PREFIX} {session_name} -c {self.get_active_card().path}\' &> /dev/null")
         if quit: exit(0)
 
 
