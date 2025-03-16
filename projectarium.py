@@ -52,7 +52,7 @@ STATUSES = {
 
 
 # Assign other variables
-PROD_DB_PATH = "/home/sean/bin/.projectarium.db"
+PROD_DB_PATH = "/home/sean/.local/share/projectarium/.projectarium.db"
 DB_PATH = ".projectarium.db"
 TERMINAL_PREFIX = "gnome-terminal --maximize --working-directory="
 NEOVIM_PREFIX = "nvim "
