@@ -493,7 +493,6 @@ class Window:
             height=INACTIVE_CARD_HEIGHT , width=self.w - (2 * X_PAD),y=self.y + Y_PAD, x=self.x + X_PAD,            # UI elements
             name=card[1], path=card[3], description=card[2], file=card[4], priority=card[7], language=card[6], todo_count=card[8])    # Card data
                 for card in dm.pull_card_data(self.title)]
-        log.info(self.cards[0].language)
 
     def has_cards(self):
         return len(self.cards) > 0
