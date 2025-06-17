@@ -14,9 +14,10 @@
 
 import curses
 import sqlite3
-import logging
+# import logging
 import os
 import sys
+from typing import Required
 
 # custom curses color module
 from ccolors import *       # pyright: ignore[reportWildcardImportFromLibrary]
@@ -25,8 +26,8 @@ from cinput import *       # pyright: ignore[reportWildcardImportFromLibrary]
 
 
 # Configure logging
-logging.basicConfig(filename='debug.log', level=logging.DEBUG, filemode='w', format='%(asctime)s - %(levelname)s - %(message)s')
-log = logging.getLogger(__name__)
+# logging.basicConfig(filename='debug.log', level=logging.DEBUG, filemode='w', format='%(asctime)s - %(levelname)s - %(message)s')
+# log = logging.getLogger(__name__)
 
 
 # Configure curses
@@ -118,7 +119,16 @@ class StateManager:
     def update_windows(self): # TODO: only update active window and new active window
         for window in WINDOWS:
             window.update(self.dm, self.active_window, self.active_card, self.mode)
-        commands = ["add", "delete", "edit", "quit"] if self.in_todo else ["add", "delete", "edit", "cd", "nvim", "both", "todo", "progress", "regress", "mode", "quit"]
+
+        # Implicit, no explicit shortcut mapping
+        # commands = ["add", "delete", "edit", "quit"] if self.in_todo else ["add", "delete", "edit", "cd", "nvim", "both", "todo", "progress", "regress", "mode", "quit"]
+
+        # Explicit shortcut mapping
+        if self.in_todo:
+            commands = [("a", "add"), ("e", "delete"), ("e", "edit"), ("q", "quit")] 
+        else:
+            commands = [("a", "add"), ("d", "delete"), ("e", "edit"), ("c", "cd"), ("n", "nvim"), ("m", "tmux"),
+                        ("b", "both"), ("t", "todo"), ("p", "progress"), ("r", "regress"), ("v", "view"), ("q", "quit")]
         self.cw.help(commands)
 
     def update_window(self, window_id=None):
@@ -239,13 +249,13 @@ class StateManager:
         
     def add_item(self):
         if self.tm:
-            self.tm.update_tm(self.dm.add_item(self.cw.get_input("New todo item"), self.get_active_card().id))
+            self.tm.update_tm(self.dm.add_item(self.cw.get_input("New todo item", required=True), self.get_active_card().id))
             self.update_windows()
             self.tm.draw()
 
     def edit_item(self):
         if self.tm and self.get_active_card().todo_count > 0:
-            new_description = self.cw.get_input("Description", default=self.tm.todo_list[self.tm.selected_item][1])
+            new_description = self.cw.get_input("Description", default=self.tm.todo_list[self.tm.selected_item][1], required=True)
             todo_id = self.tm.todo_list[self.tm.selected_item][0]
             self.tm.update_tm(self.dm.edit_item(todo_id, new_description, self.get_active_card().id))
             self.update_windows()
@@ -258,9 +268,9 @@ class StateManager:
             self.tm.draw()
 
     def add_project(self):
-        name = self.cw.get_input("Name")
+        name = self.cw.get_input("Name", required=True)
         description = self.cw.get_input("Description")
-        path = self.cw.get_input("Path", input_type="path")
+        path = self.cw.get_input("Path", input_type="path", required=True)
         file = self.cw.get_input("File", input_type="path")
         language = self.cw.get_input("Language")
         self.dm.add_project(name, description, path, file, "Backlog", language)
@@ -273,7 +283,7 @@ class StateManager:
         self.update_windows()
 
     def delete_project(self):
-        if self.cw.make_selection("Delete?", ["Yes", "No"], default="No") == "Yes":
+        if self.cw.make_selection("Delete?", ["Yes", "No"], default="No", required=True) == "Yes":
             self.dm.delete_project(self.get_active_card().id)
             self.up()
         self.update_windows()
@@ -491,7 +501,7 @@ class Window:
     def pull(self, dm):
         self.cards = [Card(id=card[0], # id
             height=INACTIVE_CARD_HEIGHT , width=self.w - (2 * X_PAD),y=self.y + Y_PAD, x=self.x + X_PAD,            # UI elements
-            name=card[1], path=card[3], description=card[2], file=card[4], priority=card[7], language=card[6], todo_count=card[8])    # Card data
+            name=card[1], path=card[3], description=card[2], file=card[4], priority=card[5], language=card[7], todo_count=card[8])    # Card data
                 for card in dm.pull_card_data(self.title)]
 
     def has_cards(self):
@@ -563,7 +573,7 @@ class Card():
             self.win.addstr(4, self.w - len("items: ") - 2 - len(str(self.todo_count)), "items: ")            # 'items: '
             # self.win.addstr(4, self.w - len("items: ") - 2 - len(str(self.todo_count)), "items: ")            # 'items: '
             self.win.addstr(4, 2, "priority: ")
-            self.win.addstr(4, len("priority: ") + 2, f"{self.priority}", self.priority)
+            self.win.addstr(4, len("priority: ") + 2, f"{self.priority}")
             self.win.addstr(4, self.w - len(str(self.todo_count)) - 2, f"{self.todo_count}", color_code(self.todo_count, REGULAR))   # todo count
         else:
             draw_box(self.win, dark)
