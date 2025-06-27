@@ -8,8 +8,9 @@
 # Windows and Cards for TUI Kanban board
 #
 
-from ccolors import *
 from config import *
+
+import curses
 
 def draw_box(window, attributes):
     window.attron(attributes)
@@ -17,36 +18,38 @@ def draw_box(window, attributes):
     window.attroff(attributes)
 
 class Window:
-    def __init__(self, id, win, title, title_pos=2, color=WHITE):
+    def __init__(self, id, win, title, title_pos=2, color=WHITE, cards=[]):
         self.id = id
         self.win = win
         # self.h = height
         # self.w = width
-        # self.y = y
-        # self.x = x
-        # self.win = curses.newwin(self.h, self.w, self.y, self.x)
         self.title = title
         self.color = color
         self.title_pos = title_pos
-        self.cards = []
+        self.cards = cards
         self.card_offset = 0
 
-    def pull(self, dm):
-        self.cards = []
-        # self.cards = [Card(id=card[0], # id
-        #     height=INACTIVE_CARD_HEIGHT , width=self.w - (2 * X_PAD),y=self.y + Y_PAD, x=self.x + X_PAD,            # UI elements
-        #     name=card[1], path=card[3], description=card[2], file=card[4], priority=card[7], language=card[6], todo_count=card[8])    # Card data
-        #         for card in dm.pull_card_data(self.title)]
+        self.h, self.w = self.win.getmaxyx()
+        self.y = 0
+        self.x = STATUSES[self.title][0] * self.w
+        # self.x = x
+        # self.win = curses.newwin(self.h, self.w, self.y, self.x)
+        
+
+    # def create_card(self, id, name, path="", description="", file="", priority=0, language="", todo_count=0):
+    #     card_win = curses.newwin(INACTIVE_CARD_HEIGHT, self.w - (2 * X_PAD), self.y + Y_PAD, self.x + X_PAD)
+    #     self.cards.append(Card(id, card_win, name, path,
+    #         description, file, priority, language, todo_count))  # Card data
+
+    def add_card(self, card):
+        card.assign(curses.newwin(INACTIVE_CARD_HEIGHT, self.w - (2 * X_PAD), self.y + Y_PAD, self.x + X_PAD))
+        self.cards.append(card)
 
     def has_cards(self):
         return len(self.cards) > 0
 
-    def update(self, dm, active_window_id, active_card_index, mode=0):
-
-
+    def update(self, active_window_id, active_card_index, mode=0):
         self.card_offset = 0
-
-        self.pull(dm)
 
         # TODO: only draw window once
         # draw this Window
@@ -58,7 +61,7 @@ class Window:
             if self.id == active_window_id and i == active_card_index:
                 card.activate()
 
-            card.draw(self.card_offset, mode)
+            card.draw(self.card_offset + Y_PAD, self.x + (self.id * X_PAD), mode)
             self.card_offset += 3 if not card.active else 6
 
 
@@ -70,29 +73,54 @@ class Window:
 
 
 class Card():
-    def __init__(self, id, height, width, y, x, name, path, description="", file="", priority=0, language="", todo_count=0):
+    def __init__(self, id, win, name, path, description="", file="", priority=0, status="", language="", todo_count=0):
         self.id = id
-        self.h = height
-        self.w = width
-        self.y = y
-        self.x = x
-        self.win = curses.newwin(self.h, self.w, self.y, self.x)
+        # self.h = height
+        # self.w = width
+        # self.y = y
+        # self.x = x
+        self.win = win
+        self.h, self.w = win.getmaxyx()
+        self.y, self.x = win.getyx()
         self.name = name
         self.path = path
         self.file = file
         self.priority = priority
         self.description = description
+        self.status = status
         self.language = language
         self.todo_count = todo_count
         self.active = False
         self.text_color = WHITE
 
+    @classmethod
+    def from_project(cls, project):
+        return cls(
+            project.id,
+            curses.newwin(INACTIVE_CARD_HEIGHT, 0, 0, 0),  # Placeholder window, will be resized later
+            project.name,
+            project.path,
+            project.description,
+            project.file,
+            project.priority,
+            project.status,
+            project.language,
+            project.todo_count
+        )
+
+    def assign(self, win):
+        self.win = win
+        self.h, self.w = win.getmaxyx()
+        self.y, self.x = win.getyx()
+        # self.win.resize(INACTIVE_CARD_HEIGHT, self.w)
+
     def clear(self):
         self.win.erase()
 
-    def draw(self, y_offset, mode):
+    def draw(self, y_offset, x_offset, mode):
+        log.info(f"Drawing card: {self.name} at offset {y_offset}")
         self.y += y_offset
-        self.win.mvwin(self.y, self.x)
+        self.win.mvwin(self.y, self.x + X_PAD + x_offset)
         # self.win.box()
 
         self.win.addstr(Y_PAD, X_PAD, self.name, self.text_color | BOLD)

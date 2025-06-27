@@ -8,6 +8,10 @@
 # Constants for projectarium
 #
 
+import logging
+log = logging.getLogger(__name__)
+log.info("Starting projectarium configuration")
+
 from ccolors import *
 
 #Configure windows
@@ -18,10 +22,10 @@ ACTIVE = 2
 DONE = 3
 HELP = 4
 STATUSES = {
-    "Abandoned":    RED,
-    "Backlog":      BLUE,
-    "Active":       BRIGHT_YELLOW,
-    "Done":         GREEN,
+    "Abandoned":    (0, RED),
+    "Backlog":      (1, BLUE),
+    "Active":       (2, BRIGHT_YELLOW),
+    "Done":         (3, GREEN),
 }
 
 
