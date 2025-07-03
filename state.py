@@ -14,7 +14,7 @@ from config import *
 from db import DatabaseManager
 from objects import Project, TodoItem
 
-from ui.layout import Window, Card
+from ui.layout import Window, Card, TodoList
 
 import curses
 
@@ -33,7 +33,7 @@ class StateManager:
         self.windows = []
 
     def init(self, windows):
-        log.info(f"windows: {windows[0].title}, {windows[1].title}, {windows[2].title}, {windows[3].title}")
+        # log.info(f"windows: {windows[0].title}, {windows[1].title}, {windows[2].title}, {windows[3].title}")
         self.windows = [windows[i] for i in range(len(windows))]
         self.update_windows()
         for window in self.windows:
@@ -43,9 +43,13 @@ class StateManager:
                 self.get_active_card().activate()
                 break
 
+    def get_projects(self) -> list[Card]:
+        return [Card.from_project(project) for project in self.projects]
+
+
     def get_projects_by_status(self, status) -> list[Card]:
-        if self.projects is []:
-            return []
+        # if self.projects is []:
+            # return []
         # log.info([project for project in self.projects if project.status == status])
         # log.info(f"projects: {[project for project in self.projects if project.status == status]}")
         return [Card.from_project(project) for project in self.projects if project.status == status]
@@ -55,7 +59,7 @@ class StateManager:
             window.cards = self.get_projects_by_status(window.title)
             for card in window.cards:
                 card.assign(curses.newwin(INACTIVE_CARD_HEIGHT, window.w - (2 * X_PAD), window.y + Y_PAD, window.x + X_PAD))
-            window.update(self.active_window, self.active_card, mode=self.mode)
+            window.update(self.get_projects_by_status(window.title), self.active_window, self.active_card, mode=self.mode)
 
         # Implicit, no explicit shortcut mapping
         # commands = ["add", "delete", "edit", "quit"] if self.in_todo else ["add", "delete", "edit", "cd", "nvim", "both", "todo", "progress", "regress", "mode", "quit"]
@@ -72,12 +76,13 @@ class StateManager:
     #     window_id = self.active_window if window_id is None else window_id
     #     self.windows[window_id].update(self.dm, window_id, self.active_card)
 
-    def draw_windows(self):
-        for window in self.windows:
-            window.draw(self.active_window, self.mode)
-            # for card in self.dm.pull_card_data(window.title)[0]:
-                # projectarium_log.info(f"Creating card {card}")
-                # window.add_card(card)
+    # def draw_windows(self):
+    #     for window in self.windows:
+    #         log.info(f"Drawing window {window.title}, this many items: {len(window.cards)}")
+    #         window.draw(self.active_window, self.mode)
+    #         # for card in self.dm.pull_card_data(window.title)[0]:
+    #         #     projectarium_log.info(f"Creating card {card}")
+    #         #     window.add_card(card)
 
     def get_active_window_cards(self):
         return self.windows[self.active_window].cards
@@ -122,7 +127,7 @@ class StateManager:
         self.update_windows()
 
     def open_todo(self):
-        self.tm = TodoManager(self.active_window, self.get_active_card(), self.dm.pull_todo_data(self.get_active_card().id))
+        self.tm = TodoList(self.active_window, self.get_active_card(), self.dm.pull_todo_data(self.get_active_card().id))
         self.in_todo = True
         # self.cw.help(self.active_window, self.get_active_card(), self.in_todo)
         self.set_mode(DIM)
@@ -236,61 +241,5 @@ class StateManager:
             self.dm.delete_project(self.get_active_card().id)
             self.up()
         self.update_windows()
-
-
-class TodoManager():
-    def __init__(self, active_window, card, todo_list):
-        self.active_window = active_window
-        self.card = card
-        self.todo_list = todo_list
-
-        self.win = None
-        self.selected_item = 0
-
-        self.draw()
-
-    def init(self):
-        pass
-
-    def draw(self):
-        if self.win:
-            self.win.erase()
-            self.win.refresh()
-
-        longest = max([len(item[1]) for item in self.todo_list]) if len(self.todo_list) > 0 else 20
-        self.h, self.w = self.card.todo_count + (4 * Y_PAD) + 1, longest + (4 * X_PAD) + 2
-        self.y, self.x = self.card.y, (self.card.x + SECTION_WIDTH - 1) if self.active_window < 2 else self.card.x - longest - (4 * X_PAD) - 2 - 3
-        self.win = curses.newwin(self.h, self.w, self.y, self.x)
-
-        draw_box(self.win, WHITE)
-        self.win.addstr(1, 2, "TODO:", WHITE | BOLD)
-        self.win.addstr(2, 2, "-----", WHITE | BOLD)
-        self.items = ["• " + item[1] for item in self.todo_list if item[3] == 0]
-        item_y =  3
-        for i, item in enumerate(self.items):
-            self.win.addstr(item_y, 4, item, INVERT if i == self.selected_item else WHITE)
-            item_y += 1
-        
-        self.win.refresh()
-
-    def close(self):
-        if self.win:
-            self.win.erase()
-            self.items = []
-            self.win.refresh()
-        
-    def down(self):
-        self.selected_item = min(self.selected_item + 1, self.card.todo_count - 1)
-        self.draw()
-            
-    def up(self):
-        self.selected_item = max(self.selected_item - 1, 0)
-        self.draw()
-
-    def update_tm(self, new_list):
-        self.todo_list = new_list
-        self.card.todo_count = len(new_list)
-        if self.selected_item >= self.card.todo_count:
-            self.up()
 
 
