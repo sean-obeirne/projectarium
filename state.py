@@ -44,7 +44,7 @@ class StateManager:
                 break
 
     def get_projects(self) -> list[Card]:
-        return [Card.from_project(project) for project in self.projects]
+        return [Card.from_project(project) for project in self.dm.pull_projects()]
 
 
     def get_projects_by_status(self, status) -> list[Card]:
@@ -52,7 +52,7 @@ class StateManager:
             # return []
         # log.info([project for project in self.projects if project.status == status])
         # log.info(f"projects: {[project for project in self.projects if project.status == status]}")
-        return [Card.from_project(project) for project in self.projects if project.status == status]
+        return [Card.from_project(project) for project in self.dm.pull_projects() if project.status == status]
 
     def update_windows(self): # TODO: only update active window and new active window
         for window in self.windows:
@@ -89,8 +89,10 @@ class StateManager:
 
     def get_active_card(self):
         if len(self.get_active_window_cards()) > 0:
+            # log.info(f"Active card: {self.windows[self.active_window].cards[self.active_card].name} in window {self.active_window}")
             return self.windows[self.active_window].cards[self.active_card]
         else:
+            log.warning("No active card found, returning dummy card")
             return Card(-1, 0, 0, 0, 0, "", "", "", "", 0, "") # dummy card to fool linter
     # def __init__(self, id, height, width, y, x, name, path, description="", file="", priority=0, language="", todo_count=0):
 
@@ -127,6 +129,7 @@ class StateManager:
         self.update_windows()
 
     def open_todo(self):
+        # log.info(f"Opening todo for card: {self.get_active_card().name} in window {self.active_window}")
         self.tm = TodoList(self.active_window, self.get_active_card(), self.dm.pull_todo_data(self.get_active_card().id))
         self.in_todo = True
         # self.cw.help(self.active_window, self.get_active_card(), self.in_todo)

@@ -21,8 +21,6 @@ class Window:
     def __init__(self, id, win, title, title_pos=2, color=WHITE, cards=[]):
         self.id = id
         self.win = win
-        # self.h = height
-        # self.w = width
         self.title = title
         self.color = color
         self.title_pos = title_pos
@@ -32,8 +30,6 @@ class Window:
         self.h, self.w = self.win.getmaxyx()
         self.y = 0
         self.x = STATUSES[self.title][0] * self.w
-        # self.x = x
-        # self.win = curses.newwin(self.h, self.w, self.y, self.x)
         
 
     # def create_card(self, id, name, path="", description="", file="", priority=0, language="", todo_count=0):
@@ -41,10 +37,10 @@ class Window:
     #     self.cards.append(Card(id, card_win, name, path,
     #         description, file, priority, language, todo_count))  # Card data
 
-    # def add_card(self, card):
-    #     log.info(f"assigning card: {self.title} at ({self.x},{self.y}) with sizes x,y={self.win.getmaxyx()}")
-    #     card.assign(curses.newwin(INACTIVE_CARD_HEIGHT, self.w, self.y + Y_PAD, self.x + X_PAD))
-    #     self.cards.append(card)
+    def add_card(self, card):
+        # log.info(f"assigning card: {card.name} at ({card.x},{card.y}) with sizes y,x={self.win.getmaxyx()}")
+        card.assign(curses.newwin(INACTIVE_CARD_HEIGHT, self.w, self.y + Y_PAD, self.x + X_PAD))
+        self.cards.append(card)
 
     # def has_cards(self):
     #     return len(self.cards) > 0
@@ -60,12 +56,18 @@ class Window:
         # TODO: only activate necessary cards (below active one)
         # draw all Cards
         for i, project in enumerate(projects):
-            card = Card.from_project(project)
-            self.cards.append(card)
+            new_y = self.y + Y_PAD + self.card_offset
+            new_x = self.x + X_PAD
+            # log.info(f"({new_y}, {new_x}) for project: {project.name}")
+            card = Card.new_card(project, new_y, new_x, INACTIVE_CARD_HEIGHT, self.w - (2 * X_PAD))
+            # log.info(f"Creating card: {card.name} at {card.win.getbegyx()} with sizes y,x={self.win.getmaxyx()}")
+            # card.assign(curses.newwin(INACTIVE_CARD_HEIGHT, self.w - (2 * X_PAD), new_y, new_x))
+            # log.info(f"new card: {card.name} at ({card.x},{card.y}) with sizes y,x={self.win.getmaxyx()}")
+            self.add_card(card)
 
             this_height = INACTIVE_CARD_HEIGHT
             if self.id == active_window_id and i == active_card_index:
-                log.info("activating card")
+                # log.info("activating card")
                 card.activate()
                 this_height = ACTIVE_CARD_HEIGHT
 
@@ -105,7 +107,22 @@ class Card():
     def from_project(cls, project):
         return cls(
             project.id,
-            curses.newwin(INACTIVE_CARD_HEIGHT, 0, 0, 0),  # Placeholder window, will be resized later
+            curses.newwin(INACTIVE_CARD_HEIGHT, 0, 0, 0),  # Placeholder for win, will be assigned later
+            project.name,
+            project.path,
+            project.description,
+            project.file,
+            project.priority,
+            project.status,
+            project.language,
+            project.todo_count
+        )
+
+    @classmethod
+    def new_card(cls, project, y, x, h, w):
+        return cls(
+            project.id,
+            curses.newwin(h, w, y, x),
             project.name,
             project.path,
             project.description,
@@ -118,8 +135,8 @@ class Card():
 
     def assign(self, win):
         self.win = win
-        self.h, self.w = win.getmaxyx()
-        self.y, self.x = win.getyx()
+        # self.h, self.w = win.getmaxyx()
+        # self.y, self.x = win.getbegyx()
         # self.win.resize(INACTIVE_CARD_HEIGHT, self.w)
 
     def clear(self):
@@ -190,14 +207,25 @@ class TodoList():
             self.win.erase()
             self.win.refresh()
 
+
+
         longest = max([len(item[1]) for item in self.todo_list]) if len(self.todo_list) > 0 else 20
-        self.h, self.w = self.card.todo_count + (4 * Y_PAD) + 1, longest + (4 * X_PAD) + 2
-        self.y, self.x = self.card.y, (self.card.x + 10 - 1) if self.active_window < 2 else max(self.card.x - longest - (4 * X_PAD) - 2 - 3, 0)
-        log.info(f"TodoList initialized with card at ({self.card.x}, {self.card.y}) and active window {self.active_window}.")
-        log.info(f"Drawing todo list at ({self.x}, {self.y}) with size ({self.w}, {self.h})")
+        # log.info(f"Longest todo item length: {longest}")
+        self.h = self.card.todo_count + (4 * Y_PAD) + 1
+        self.w = longest + (4 * X_PAD) + 2
+        self.y, self.x = self.card.win.getbegyx()
+        if self.active_window < 2:
+            self.x += self.card.win.getmaxyx()[1] + 1 + X_PAD
+        else:
+            self.x -= longest
+            self.x -= (4 * X_PAD) + 2
+            self.x -= 3
+        # self.x = (self.card.x + 10 - 1) if self.active_window < 2 else max(self.card.x - longest - (4 * X_PAD) - 2 - 3, 0)
+        # log.info(f"TodoList initialized with card at ({self.card.x}, {self.card.y}) and active window {self.active_window}.")
+        # log.info(f"Drawing todo list at ({self.x}, {self.y}) with size ({self.w}, {self.h})")
         self.win = curses.newwin(self.h, self.w, self.y, self.x)
 
-        draw_box(self.win, WHITE)
+        draw_box(self.win, PURPLE)
         self.win.addstr(1, 2, "TODO:", WHITE | BOLD)
         self.win.addstr(2, 2, "-----", WHITE | BOLD)
         self.items = ["• " + item[1] for item in self.todo_list if item[3] == 0]

@@ -73,7 +73,7 @@ def init():
         
     dm = db.DatabaseManager(conn)
     dm.init()
-    log.debug("Database initialized")
+    log.info("Database initialized")
 
 
     windows = [Window(i, curses.newwin(SECTION_HEIGHT, SECTION_WIDTH, 0, ((i) * SECTION_WIDTH) + (i * X_PAD)), list(STATUSES.keys())[i], color=STATUSES[list(STATUSES.keys())[i]][1]) for i in range(4)]

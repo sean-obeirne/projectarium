@@ -119,7 +119,7 @@ class DatabaseManager:
         return projects
 
     def pull_card_data(self, title):
-        log.info(f"Pulling card data for status: {title}")
+        # log.info(f"Pulling card data for status: {title}")
         db_cards = self.cursor.execute("SELECT * FROM projects WHERE status = ? ORDER BY priority DESC, LOWER(name);", (title,)).fetchall()
         # get cards, then append to the end of the query result the number of tasks the card has
         # return [tuple(list(row) + [self.cursor.execute("SELECT COUNT(*) FROM todo WHERE project_id = ? AND deleted = ?;", (row[0], 0,)).fetchone()[0]])
