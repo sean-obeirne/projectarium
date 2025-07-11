@@ -19,47 +19,45 @@ from ui.layout import Window, Card, TodoList
 import curses
 
 
-
 class StateManager:
     def __init__(self, dm, cw):
         self.dm = dm
         self.cw = cw
         self.tm = None
         self.active_window = 0
-        self.active_card = -1
+        self.active_card = 0
         self.mode = COLORED
         self.in_todo = False
-        self.projects = self.dm.pull_projects()
+        self.projects = []
         self.windows = []
 
     def init(self, windows):
-        # log.info(f"windows: {windows[0].title}, {windows[1].title}, {windows[2].title}, {windows[3].title}")
         self.windows = [windows[i] for i in range(len(windows))]
+        self.projects = self.dm.pull_projects()
+        log.info(f"Projects pulled: {len(self.projects)}")
+
         self.update_windows()
         for window in self.windows:
+            for project in self.projects:
+                if project.status == window.title:
+                    log.info(f"Adding cards to window {window.title}, project {project.name}")
+                    window.add_card(project)
             if self.active_card == -1 and len(window.cards) > 0:
                 self.active_window = window.id
                 self.active_card = 0
                 self.get_active_card().activate()
-                break
+                # break
 
     def get_projects(self) -> list[Card]:
         return [Card.from_project(project) for project in self.dm.pull_projects()]
 
-
     def get_projects_by_status(self, status) -> list[Card]:
-        # if self.projects is []:
-            # return []
-        # log.info([project for project in self.projects if project.status == status])
-        # log.info(f"projects: {[project for project in self.projects if project.status == status]}")
         return [Card.from_project(project) for project in self.dm.pull_projects() if project.status == status]
 
     def update_windows(self): # TODO: only update active window and new active window
         for window in self.windows:
-            window.cards = self.get_projects_by_status(window.title)
-            for card in window.cards:
-                card.assign(curses.newwin(INACTIVE_CARD_HEIGHT, window.w - (2 * X_PAD), window.y + Y_PAD, window.x + X_PAD))
-            window.update(self.get_projects_by_status(window.title), self.active_window, self.active_card, mode=self.mode)
+            log.info(f"Updating window {window.title} with {len(self.get_projects_by_status(window.title))} projects")
+            window.update_window(self.get_projects_by_status(window.title), self.active_window, self.active_card, mode=self.mode)
 
         # Implicit, no explicit shortcut mapping
         # commands = ["add", "delete", "edit", "quit"] if self.in_todo else ["add", "delete", "edit", "cd", "nvim", "both", "todo", "progress", "regress", "mode", "quit"]
@@ -72,29 +70,15 @@ class StateManager:
                         ("b", "both"), ("t", "todo"), ("p", "progress"), ("r", "regress"), ("v", "view"), ("q", "quit")]
         self.cw.help(commands)
 
-    # def update_window(self, window_id=None):
-    #     window_id = self.active_window if window_id is None else window_id
-    #     self.windows[window_id].update(self.dm, window_id, self.active_card)
-
-    # def draw_windows(self):
-    #     for window in self.windows:
-    #         log.info(f"Drawing window {window.title}, this many items: {len(window.cards)}")
-    #         window.draw(self.active_window, self.mode)
-    #         # for card in self.dm.pull_card_data(window.title)[0]:
-    #         #     projectarium_log.info(f"Creating card {card}")
-    #         #     window.add_card(card)
-
     def get_active_window_cards(self):
         return self.windows[self.active_window].cards
 
     def get_active_card(self):
         if len(self.get_active_window_cards()) > 0:
-            # log.info(f"Active card: {self.windows[self.active_window].cards[self.active_card].name} in window {self.active_window}")
             return self.windows[self.active_window].cards[self.active_card]
         else:
             log.warning("No active card found, returning dummy card")
-            return Card(-1, 0, 0, 0, 0, "", "", "", "", 0, "") # dummy card to fool linter
-    # def __init__(self, id, height, width, y, x, name, path, description="", file="", priority=0, language="", todo_count=0):
+            return Card(-1, curses.newwin(0, 0, 0, 0), "No active card", "", "", "", 0, "", "", 0) # pyright: ignore[reportArgumentType]
 
 
 ###########################
@@ -135,7 +119,7 @@ class StateManager:
         # self.cw.help(self.active_window, self.get_active_card(), self.in_todo)
         self.set_mode(DIM)
         self.update_windows()
-        self.tm.draw()
+        self.tm.draw_todo()
 
     def quit_todo(self):
         if self.tm: self.tm.close()
@@ -162,6 +146,7 @@ class StateManager:
     def down(self):
         if self.active_card < len(self.get_active_window_cards()) - 1:
             self.navigate(lambda: setattr(self, "active_card", self.active_card + 1))
+                          # lambda: min(self.active_card + 1, max(len(self.get_active_window_cards()) - 1, 0)))
 
     def right(self):
         if self.active_window < 3:
@@ -208,7 +193,7 @@ class StateManager:
         if self.tm:
             self.tm.update_tm(self.dm.add_item(self.cw.get_input("New todo item", required=True), self.get_active_card().id))
             self.update_windows()
-            self.tm.draw()
+            self.tm.draw_todo()
 
     def edit_item(self):
         if self.tm and self.get_active_card().todo_count > 0:
@@ -216,13 +201,13 @@ class StateManager:
             todo_id = self.tm.todo_list[self.tm.selected_item][0]
             self.tm.update_tm(self.dm.edit_item(todo_id, new_description, self.get_active_card().id))
             self.update_windows()
-            self.tm.draw()
+            self.tm.draw_todo()
 
     def delete_item(self):
         if self.tm and self.get_active_card().todo_count > 0:
             self.tm.update_tm(self.dm.delete_item(self.tm.todo_list[self.tm.selected_item][0], self.get_active_card().id))
             self.update_windows()
-            self.tm.draw()
+            self.tm.draw_todo()
 
     def add_project(self):
         name = self.cw.get_input("Name", required=True)

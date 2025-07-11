@@ -30,52 +30,38 @@ class Window:
         self.h, self.w = self.win.getmaxyx()
         self.y = 0
         self.x = STATUSES[self.title][0] * self.w
-        
 
-    # def create_card(self, id, name, path="", description="", file="", priority=0, language="", todo_count=0):
-    #     card_win = curses.newwin(INACTIVE_CARD_HEIGHT, self.w - (2 * X_PAD), self.y + Y_PAD, self.x + X_PAD)
-    #     self.cards.append(Card(id, card_win, name, path,
-    #         description, file, priority, language, todo_count))  # Card data
+    def has_cards(self):
+        return len(self.cards) > 0
 
-    def add_card(self, card):
-        # log.info(f"assigning card: {card.name} at ({card.x},{card.y}) with sizes y,x={self.win.getmaxyx()}")
-        card.assign(curses.newwin(INACTIVE_CARD_HEIGHT, self.w, self.y + Y_PAD, self.x + X_PAD))
+    def add_card(self, project):
+        new_y = self.y + Y_PAD + self.card_offset
+        new_x = self.x + X_PAD
+        card = Card.new_card(project, new_y, new_x, INACTIVE_CARD_HEIGHT, self.w - (2 * X_PAD))
         self.cards.append(card)
+        # log.info(f"Added card {card.name} with status {card.status} to window {self.id}")
 
-    # def has_cards(self):
-    #     return len(self.cards) > 0
 
-    def update(self, projects, active_window_id, active_card_index, mode=0):
+    def update_window(self, projects, active_window_id, active_card_index, mode=0):
         self.cards.clear()
         self.card_offset = 0
 
-        # TODO: only draw window once
-        # draw this Window
-        self.draw(active_window_id, mode)
 
-        # TODO: only activate necessary cards (below active one)
-        # draw all Cards
         for i, project in enumerate(projects):
-            new_y = self.y + Y_PAD + self.card_offset
-            new_x = self.x + X_PAD
-            # log.info(f"({new_y}, {new_x}) for project: {project.name}")
-            card = Card.new_card(project, new_y, new_x, INACTIVE_CARD_HEIGHT, self.w - (2 * X_PAD))
-            # log.info(f"Creating card: {card.name} at {card.win.getbegyx()} with sizes y,x={self.win.getmaxyx()}")
-            # card.assign(curses.newwin(INACTIVE_CARD_HEIGHT, self.w - (2 * X_PAD), new_y, new_x))
-            # log.info(f"new card: {card.name} at ({card.x},{card.y}) with sizes y,x={self.win.getmaxyx()}")
-            self.add_card(card)
-
-            this_height = INACTIVE_CARD_HEIGHT
+            card = Card.new_card(project, self.y + Y_PAD + self.card_offset, self.win.getbegyx()[1] + X_PAD, INACTIVE_CARD_HEIGHT, self.w - (2 * X_PAD))
+            self.card_offset += INACTIVE_CARD_HEIGHT
+            self.cards.append(card)
             if self.id == active_window_id and i == active_card_index:
-                # log.info("activating card")
                 card.activate()
-                this_height = ACTIVE_CARD_HEIGHT
+                self.card_offset += INACTIVE_CARD_HEIGHT
 
-            card.draw(this_height, self.w, self.card_offset + Y_PAD, self.x + (self.id * X_PAD), mode)
-            self.card_offset += this_height
+        self.draw_window(active_window_id, mode)
+
+        for i, card in enumerate(self.cards):
+            card.draw_card(mode, self.id == active_window_id and i == active_card_index)
 
 
-    def draw(self, active_window_id, mode=0):
+    def draw_window(self, active_window_id, mode=0):
         style = self.color | BOLD if active_window_id == self.id else self.color
         draw_box(self.win, (style if mode != DIM else DARK_GREY))
         self.win.addstr(0, self.title_pos, f" {self.title} ({str(len(self.cards))}) ", (WHITE | BOLD if active_window_id == self.id else style))
@@ -85,13 +71,9 @@ class Window:
 class Card():
     def __init__(self, id, win, name, path, description="", file="", priority=0, status="", language="", todo_count=0):
         self.id = id
-        # self.h = height
-        # self.w = width
-        # self.y = y
-        # self.x = x
         self.win = win
         self.h, self.w = win.getmaxyx()
-        self.y, self.x = win.getyx()
+        self.y, self.x = win.getbegyx()
         self.name = name
         self.path = path
         self.file = file
@@ -107,7 +89,7 @@ class Card():
     def from_project(cls, project):
         return cls(
             project.id,
-            curses.newwin(INACTIVE_CARD_HEIGHT, 0, 0, 0),  # Placeholder for win, will be assigned later
+            curses.newwin(INACTIVE_CARD_HEIGHT, 0, 0, 0),  # Placeholder for win, will be given later
             project.name,
             project.path,
             project.description,
@@ -133,21 +115,13 @@ class Card():
             project.todo_count
         )
 
-    def assign(self, win):
-        self.win = win
-        # self.h, self.w = win.getmaxyx()
-        # self.y, self.x = win.getbegyx()
-        # self.win.resize(INACTIVE_CARD_HEIGHT, self.w)
-
     def clear(self):
         self.win.erase()
 
-    def draw(self, height, width, y_offset, x_offset, mode):
-        self.y += y_offset
-        # log.info(f"card y and x after offset: {self.y}, {self.x + X_PAD + x_offset}")
-        self.win = curses.newwin(height, width - 2 * X_PAD, self.y, self.x + X_PAD + x_offset)
-        # log.info(f"Drawing card: {self.name} at ({self.x},{self.y}) with offsets x={x_offset}, y={y_offset}, sizes x,y={self.win.getmaxyx()}")
-        # self.win.box()
+    def draw_card(self, mode, active=False):
+        # self.activate()
+        # self.y += y_offset
+        # self.win = curses.newwin(height, width - 2 * X_PAD, self.y, self.x + X_PAD + x_offset)
 
         self.win.addstr(Y_PAD, X_PAD, self.name, self.text_color | BOLD)
         # self.win.addstr(Y_PAD, self.w - len(self.language) - X_PAD, self.language, self.text_color)
@@ -155,15 +129,15 @@ class Card():
         dark = DARK_GREY if mode == BLAND else color_code(self.todo_count, DARK) 
         regular = WHITE if mode == BLAND or self.active and self.todo_count == 0 else color_code(self.todo_count, DARK) 
 
-        if self.active:
+        if active:
             draw_box(self.win, regular)
             self.draw_name_border(regular)
-            # self.win.addstr(3, (self.w // 2) - (len(self.description) // 2), f"{self.description}", WHITE)  # description
-            # self.win.addstr(4, self.w - len("items: ") - 2 - len(str(self.todo_count)), "items: ")            # 'items: '
-            # self.win.addstr(4, self.w - len("items: ") - 2 - len(str(self.todo_count)), "items: ")            # 'items: '
-            # self.win.addstr(4, 2, "priority: ")
-            # self.win.addstr(4, len("priority: ") + 2, f"{self.priority}")
-            # self.win.addstr(4, self.w - len(str(self.todo_count)) - 2, f"{self.todo_count}", color_code(self.todo_count, REGULAR))   # todo count
+            self.win.addstr(3, (self.w // 2) - (len(self.description) // 2), f"{self.description}", WHITE)  # description
+            self.win.addstr(4, self.w - len("items: ") - 2 - len(str(self.todo_count)), "items: ")            # 'items: '
+            self.win.addstr(4, self.w - len("items: ") - 2 - len(str(self.todo_count)), "items: ")            # 'items: '
+            self.win.addstr(4, 2, "priority: ")
+            self.win.addstr(4, len("priority: ") + 2, f"{self.priority}")
+            self.win.addstr(4, self.w - len(str(self.todo_count)) - 2, f"{self.todo_count}", color_code(self.todo_count, REGULAR))   # todo count
         else:
             draw_box(self.win, dark)
 
@@ -197,12 +171,12 @@ class TodoList():
         self.win = None
         self.selected_item = 0
 
-        self.draw()
+        self.draw_todo()
 
     def init(self):
         pass
 
-    def draw(self):
+    def draw_todo(self):
         if self.win:
             self.win.erase()
             self.win.refresh()
@@ -244,11 +218,11 @@ class TodoList():
         
     def down(self):
         self.selected_item = min(self.selected_item + 1, self.card.todo_count - 1)
-        self.draw()
+        self.draw_todo()
             
     def up(self):
         self.selected_item = max(self.selected_item - 1, 0)
-        self.draw()
+        self.draw_todo()
 
     def update_tm(self, new_list):
         self.todo_list = new_list

@@ -45,11 +45,6 @@ SCREEN_HEIGHT, SCREEN_WIDTH = stdscr.getmaxyx()
 SECTION_HEIGHT          = (SCREEN_HEIGHT - COMMAND_WINDOW_HEIGHT)
 SECTION_WIDTH           = (SCREEN_WIDTH - (3 * X_PAD)) // 4 # right-hand padding
 
-# Global helper function
-def draw_box(window, attributes):
-    window.attron(attributes)
-    window.box()
-    window.attroff(attributes)
 
 def init():
     stdscr.clear()
@@ -75,24 +70,11 @@ def init():
     dm.init()
     log.info("Database initialized")
 
-
     windows = [Window(i, curses.newwin(SECTION_HEIGHT, SECTION_WIDTH, 0, ((i) * SECTION_WIDTH) + (i * X_PAD)), list(STATUSES.keys())[i], color=STATUSES[list(STATUSES.keys())[i]][1]) for i in range(4)]
-    # windows = []
-    # for i in range(4):
-    #     windows.append(Window(i, curses.newwin(SECTION_HEIGHT, SECTION_WIDTH, 0, ((i) * SECTION_WIDTH) + (i * X_PAD)), list(STATUSES.keys())[i], color=STATUSES[list(STATUSES.keys())[i]][1]))
-
-    # windows = [
-    #     Window(ABANDONED,  curses.newwin(SECTION_HEIGHT, SECTION_WIDTH, 0, ((ABANDONED) * SECTION_WIDTH) + (ABANDONED * X_PAD)), (a := list(STATUSES.keys())[ABANDONED]),color=STATUSES[a][1]),
-    #     Window(BACKLOG,    curses.newwin(SECTION_HEIGHT, SECTION_WIDTH, 0, ((BACKLOG) * SECTION_WIDTH) + (BACKLOG * X_PAD)), (b := list(STATUSES.keys())[BACKLOG]),  color=STATUSES[b][1]),
-    #     Window(ACTIVE,     curses.newwin(SECTION_HEIGHT, SECTION_WIDTH, 0, ((ACTIVE) * SECTION_WIDTH) + (ACTIVE * X_PAD)), (c := list(STATUSES.keys())[ACTIVE]),   color=STATUSES[c][1]),
-    #     Window(DONE,       curses.newwin(SECTION_HEIGHT, SECTION_WIDTH, 0, ((DONE) * SECTION_WIDTH) + (DONE * X_PAD)), (d := list(STATUSES.keys())[DONE]),     color=STATUSES[d][1])
-    # ]
 
     sm = state.StateManager(dm, cw)
     sm.init(windows)
-    # windows[1].create_card(21, "snr", "/home/sean/.config/nvim/lua/snr/", "Search and replace plugin", "init.lua", 0, "Lua", 0)
-    # windows[1].update(0, 0)
-    # sm.draw_windows()
+    log.info("State initialized")
 
     return sm
 
@@ -100,9 +82,6 @@ def init():
 def main(stdscr):
     sm = init()
     sm.update_windows()
-
-    # log.info(f"Window: {windows[ABANDONED].title}")
-    # log.info(f"Window Cards: {WINDOWS[ABANDONED].cards[0].name}")
 
     todo_keymap = {
         "q":        lambda:   sm.quit_todo(),
@@ -146,8 +125,6 @@ def main(stdscr):
         "KEY_DOWN":   lambda:  sm.down(),
 
         "m": lambda:  sm.next_mode(),
-
-        # "": lambda: ,
     }
 
     # Main loop
