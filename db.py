@@ -96,8 +96,10 @@ class DatabaseManager:
                 self.conn.commit()
 
 
-    def pull_projects(self):
-        entries = self.cursor.execute("SELECT * FROM projects ORDER BY priority DESC, LOWER(name);", ()).fetchall()
+    def pull_projects(self, status_filter=""):
+        if status_filter:
+            status_filter = f"WHERE status = '{status_filter}'"
+        entries = self.cursor.execute(f"SELECT * FROM projects {status_filter} ORDER BY priority DESC, LOWER(name);", ()).fetchall()
         projects = []
         for entry in entries:
             pid, name, description, path, file, priority, status, language = entry
@@ -115,6 +117,7 @@ class DatabaseManager:
                 language=language or "",
                 todo_count=todo_count
             ))
+            # log.debug(f"Pulled project: {name} with status: {status} and todo count: {todo_count}")
 
         return projects
 

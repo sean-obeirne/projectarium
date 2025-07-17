@@ -18,54 +18,47 @@ def draw_box(window, attributes):
     window.attroff(attributes)
 
 class Window:
-    def __init__(self, id, win, title, title_pos=2, color=WHITE, cards=[]):
+    def __init__(self, id, win, title, color=WHITE):
         self.id = id
         self.win = win
         self.title = title
         self.color = color
-        self.title_pos = title_pos
-        self.cards = cards
+        self.cards = []
         self.card_offset = 0
 
         self.h, self.w = self.win.getmaxyx()
         self.y = 0
         self.x = STATUSES[self.title][0] * self.w
 
+    def __str__(self):
+        return f"Window(id={self.id}, title='{self.title}', color={self.color}, cards={len(self.cards)})"
+
     def has_cards(self):
         return len(self.cards) > 0
 
     def add_card(self, project):
         new_y = self.y + Y_PAD + self.card_offset
-        new_x = self.x + X_PAD
+        new_x = self.x + (X_PAD * self.id) + X_PAD
         card = Card.new_card(project, new_y, new_x, INACTIVE_CARD_HEIGHT, self.w - (2 * X_PAD))
+        log.info(f"Adding card {card} to window {self.id} at position ({new_y}, {new_x})")
         self.cards.append(card)
-        # log.info(f"Added card {card.name} with status {card.status} to window {self.id}")
+        self.card_offset += INACTIVE_CARD_HEIGHT
 
-
-    def update_window(self, projects, active_window_id, active_card_index, mode=0):
-        self.cards.clear()
-        self.card_offset = 0
-
-
-        for i, project in enumerate(projects):
-            card = Card.new_card(project, self.y + Y_PAD + self.card_offset, self.win.getbegyx()[1] + X_PAD, INACTIVE_CARD_HEIGHT, self.w - (2 * X_PAD))
-            self.card_offset += INACTIVE_CARD_HEIGHT
-            self.cards.append(card)
-            if self.id == active_window_id and i == active_card_index:
-                card.activate()
-                self.card_offset += INACTIVE_CARD_HEIGHT
-
-        self.draw_window(active_window_id, mode)
-
-        for i, card in enumerate(self.cards):
-            card.draw_card(mode, self.id == active_window_id and i == active_card_index)
-
-
-    def draw_window(self, active_window_id, mode=0):
+    def draw_window(self, active_window_id, active_card_id, mode=0):
         style = self.color | BOLD if active_window_id == self.id else self.color
         draw_box(self.win, (style if mode != DIM else DARK_GREY))
-        self.win.addstr(0, self.title_pos, f" {self.title} ({str(len(self.cards))}) ", (WHITE | BOLD if active_window_id == self.id else style))
+        self.win.addstr(0, X_PAD, f" {self.title} ({str(len(self.cards))}) ", (WHITE | BOLD if active_window_id == self.id else style))
         self.win.refresh()
+
+        log.info(f"Length of cards in window {self.id}: {len(self.cards)}, cards: {[str(card) for card in self.cards]}")
+        self.card_offset = 0
+        for i, card in enumerate(self.cards):
+            active = (self.id == active_window_id and i == active_card_id)
+            log.info(f"Drawing card {card} at offset {self.card_offset} in window {self.id}, active: {active}")
+            card.win.mvwin(self.y + self.card_offset + Y_PAD, self.x + X_PAD + (self.id * X_PAD))
+            card.win.resize(ACTIVE_CARD_HEIGHT, self.w - 2*X_PAD)
+            card.draw_card(mode, active)
+            self.card_offset += ACTIVE_CARD_HEIGHT if active else INACTIVE_CARD_HEIGHT
 
 
 class Card():
@@ -84,6 +77,9 @@ class Card():
         self.todo_count = todo_count
         self.active = False
         self.text_color = WHITE
+
+    def __str__(self):
+        return f"Card(id={self.id}, name='{self.name}', status={self.status})"
 
     @classmethod
     def from_project(cls, project):
@@ -127,9 +123,10 @@ class Card():
         # self.win.addstr(Y_PAD, self.w - len(self.language) - X_PAD, self.language, self.text_color)
 
         dark = DARK_GREY if mode == BLAND else color_code(self.todo_count, DARK) 
-        regular = WHITE if mode == BLAND or self.active and self.todo_count == 0 else color_code(self.todo_count, DARK) 
+        regular = WHITE if mode == BLAND or active and self.todo_count == 0 else color_code(self.todo_count, DARK) 
 
         if active:
+            self.win.resize(ACTIVE_CARD_HEIGHT, self.w)
             draw_box(self.win, regular)
             self.draw_name_border(regular)
             self.win.addstr(3, (self.w // 2) - (len(self.description) // 2), f"{self.description}", WHITE)  # description
@@ -139,17 +136,10 @@ class Card():
             self.win.addstr(4, len("priority: ") + 2, f"{self.priority}")
             self.win.addstr(4, self.w - len(str(self.todo_count)) - 2, f"{self.todo_count}", color_code(self.todo_count, REGULAR))   # todo count
         else:
+            self.win.resize(INACTIVE_CARD_HEIGHT, self.w)
             draw_box(self.win, dark)
 
         self.win.refresh()
-
-    def activate(self):
-        self.active = True
-        self.win.resize(ACTIVE_CARD_HEIGHT, self.w)
-
-    def deactivate(self):
-        self.active = False
-        self.win.resize(INACTIVE_CARD_HEIGHT, self.w)
 
     def draw_name_border(self, attributes):
         if self.active:
@@ -180,8 +170,6 @@ class TodoList():
         if self.win:
             self.win.erase()
             self.win.refresh()
-
-
 
         longest = max([len(item[1]) for item in self.todo_list]) if len(self.todo_list) > 0 else 20
         # log.info(f"Longest todo item length: {longest}")

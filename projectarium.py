@@ -16,7 +16,6 @@ import curses
 import sqlite3
 import os
 import sys
-from typing import Required
 
 
 import logging
@@ -25,14 +24,12 @@ os.system("touch debug.log")  # Create the log file if it doesn't exist
 
 from config import *
 
-# custom curses color module
 from ccolors import *       # pyright: ignore[reportWildcardImportFromLibrary]
 from cinput import *       # pyright: ignore[reportWildcardImportFromLibrary]
 
 import state
 import db
 from ui.layout import *
-
 
 
 # Configure curses
@@ -62,7 +59,6 @@ def init():
         conn = sqlite3.connect(DB_PATH)
     else:
         conn = sqlite3.connect(PROD_DB_PATH)
-        # conn = sqlite3.connect(DB_PATH)
 
     cw = CommandWindow()
         
@@ -73,15 +69,25 @@ def init():
     windows = [Window(i, curses.newwin(SECTION_HEIGHT, SECTION_WIDTH, 0, ((i) * SECTION_WIDTH) + (i * X_PAD)), list(STATUSES.keys())[i], color=STATUSES[list(STATUSES.keys())[i]][1]) for i in range(4)]
 
     sm = state.StateManager(dm, cw)
-    sm.init(windows)
+    sm.init()
     log.info("State initialized")
 
-    return sm
+    for window in windows:
+        projects = sm.get_projects_by_status(window.title)
+        for project in projects:
+            window.add_card(project)
 
+    return sm, windows
+
+def draw_windows(windows, active_window, active_card, mode=0):
+    for window in windows:
+        window.win.clear()
+        window.draw_window(active_window, active_card, mode)
+        window.win.refresh()
 
 def main(stdscr):
-    sm = init()
-    sm.update_windows()
+    sm, windows = init()
+    sm.draw_cw() # TODO: basically, this needs to draw only cw
 
     todo_keymap = {
         "q":        lambda:   sm.quit_todo(),
@@ -127,8 +133,12 @@ def main(stdscr):
         "m": lambda:  sm.next_mode(),
     }
 
-    # Main loop
     while True:
+        # draw ui
+        draw_windows(windows, sm.active_window, sm.active_card)
+
+        log.info(f"Active window: {sm.get_active_window()} | Active card: {sm.get_active_card().name} | Mode: {sm.mode}")
+
         # get and handle input
         key = stdscr.getkey()
         if sm.in_todo:
